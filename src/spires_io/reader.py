@@ -29,6 +29,7 @@ class SpiresData:
         # Validate input config
         self.config = SpiresConfig(config_file=config_file)
 
+        self.sensor_name = self.config.sensor.name.lower()
         self.sensor_resolution = self.config.sensor.resolution
 
         self.dem = 0.0
@@ -37,15 +38,22 @@ class SpiresData:
         self.aspect = 0.0
         self.canopy_fraction = 0.0
 
-        self.view_zenith = 0.0
-        self.view_azimuth = 0.0
-        self.solar_angle = 30.0
-        self.solar_azimuth = 180.0
-
+        self.sensor_zenith = None
+        self.sensor_azimuth = None
+        self.solar_zenith = None
+        self.solar_azimuth = None
         self.target_spectra = None
         self.background_spectra = None
         self.lut_dir = None
         self.lut_dif = None
+
+        sensor_loaders = {
+            "modis": self._load_modis,
+            "viirs": self._load_viirs,
+            "sentinel-2": self._load_s2,
+            "emit": self._load_emit,
+        }
+        self.load_sensor_data = sensor_loaders.get(self.sensor_name)
 
 
     # The two main methods that user has access to Load everything specificed in the config
@@ -54,7 +62,6 @@ class SpiresData:
         
         # Load all static data first
         for f in constants.STATIC_DATA:
-            print(f)
             with rio.open(getattr(self.config.files, f)) as src:
                 data = src.read().squeeze()
                 if self.config.option.resampling_method is not None:
@@ -96,12 +103,55 @@ class SpiresData:
                     data[data>1.0] = np.nan
                     data[data<0.0] = np.nan
 
-            #import matplotlib.pyplot as plt
-            #plt.imshow(data)
-            #plt.show()
+
                 
         # Now the image data
-        # image, r0, cloudmask, watermask?
+        img_path = Path(self.config.files.image_data)
+
+        if img_path.is_dir():
+            all_img_files = [
+                f
+                for f in img_path.iterdir()
+                if f.is_file()
+                and not f.name.startswith(".")
+                and (f.suffix.lower() in constants.VALID_EXTENSIONS or f.suffix == "")
+            ]
+        else:
+            all_img_files = [img_path]
+        
+        img_files = self._filter_by_date(all_img_files)
+
+        if not img_files:
+            raise FileNotFoundError(
+                f"No files matching configuration found at {img_path}"
+            )
+        
+        if self.config.option.cpu_cores > 1 and len(img_files) > 1:
+            data = Parallel(n_jobs=self.config.option.cpu_cores)(
+                delayed(self.load_sensor_data)(f) for f in img_files
+            )
+        else:
+            data = [self.load_sensor_data(f) for f in img_files]
+        
+        self.spectrum_target = np.stack([r[0] for r in data], axis=-1)
+        self.sensor_zenith = np.stack([r[1][..., 0] for r in data], axis=-1)
+        self.sensor_azimuth = np.stack([r[1][..., 1] for r in data], axis=-1)
+        self.solar_zenith = np.stack([r[1][..., 2] for r in data], axis=-1)
+        self.solar_azimuth = np.stack([r[1][..., 3] for r in data], axis=-1)
+
+        print(self.spectrum_target.shape)
+        print(self.sensor_zenith.shape)
+        print(self.sensor_azimuth.shape)
+        print(self.solar_zenith.shape)
+        import matplotlib.pyplot as plt
+        plt.imshow(self.spectrum_target[:,:,0])
+        plt.show()
+
+
+        # Next is # r0, 
+        # cloudmask, watermask?
+
+        
 
 
         pass
@@ -122,7 +172,15 @@ class SpiresData:
 
 
 
-    def _load_modis(self) -> tuple[npt.NDArray[np.float32], ...]:
+    def _load_modis(self) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
+
+
+        # ? bands = self.config.sensor.selected_bands or (
+        #    list(constants.VIIRS_500M_REFLECTANCE_BANDS) + 
+        #    list(constants.VIIRS_1KM_REFLECTANCE_BANDS)
+        #)
+
+
 
         # Determine if we need to apply correction based on sensor/version
         #if not self.config.option.ignore_topography_correction:
@@ -138,54 +196,32 @@ class SpiresData:
 
 
 
-    def _load_viirs(self, img_file) -> tuple[npt.NDArray[np.float32], ...]:
-        # TODO should get the SZZA too and work in constnats
+    def _load_viirs(self, img_file) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
 
         ds = nc.Dataset(img_file, "r")
 
-        band_order = [
-            "SurfReflect_M1_1",
-            "SurfReflect_M2_1",
-            "SurfReflect_M3_1",
-            "SurfReflect_M4_1",
-            "SurfReflect_I1_1",
-            "SurfReflect_M5_1",
-            "SurfReflect_I2_1",
-            "SurfReflect_M7_1",
-            "SurfReflect_M8_1",
-            "SurfReflect_I3_1",
-            "SurfReflect_M10_1",
-            "SurfReflect_M11_1",
-        ]
-
-        def process_band(band):
-            I_bands = band in [
-                "SurfReflect_I1_1",
-                "SurfReflect_I2_1",
-                "SurfReflect_I3_1",
-            ]
-            data_field = "VIIRS_Grid_500m_2D" if I_bands else "VIIRS_Grid_1km_2D"
-            data = ds["HDFEOS"]["GRIDS"][data_field]["Data Fields"][band][:].astype(
-                np.float32
-            )
-            if not I_bands:
-                data = zoom(data, 2, order=3)
-            return data
-
-        target = np.stack([process_band(b) for b in band_order], axis=0)
-
-        west = ds.getncattr("WestBoundingCoord")
-        north = ds.getncattr("NorthBoundingCoord")
-        west, north = Transformer.from_crs(
-            "EPSG:4326", constants.VIIRS_MODIS_CRS, always_xy=True
-        ).transform(west, north)
-        transform = Affine(
-            self.sensor_resolution, 0, west, 0, -self.sensor_resolution, north
+        bands = self.config.sensor.selected_bands or (
+            list(constants.VIIRS_500M_REFLECTANCE_BANDS) + 
+            list(constants.VIIRS_1KM_REFLECTANCE_BANDS)
         )
 
-        warped_target = self._warp_data(target, transform, constants.VIIRS_MODIS_CRS)
+        def process_band(band_id: str):
+            is_500m = band_id in constants.VIIRS_500M_REFLECTANCE_BANDS
+            grid_name = "VIIRS_Grid_500m_2D" if is_500m else "VIIRS_Grid_1km_2D"
+            field_name = f"SurfReflect_{band_id}_1"
+            data = ds["HDFEOS"]["GRIDS"][grid_name]["Data Fields"][field_name][:].astype(np.float32)
+            return data if is_500m else zoom(data, 2, order=3)
 
-        sensor_angles = np.stack(
+        data = np.stack([process_band(b) for b in bands], axis=0)
+
+        geom_fields = [
+            constants.VIIRS_1KM_GEOMETRY_FIELDS["sensor_zenith"],
+            constants.VIIRS_1KM_GEOMETRY_FIELDS["sensor_azimuth"],
+            constants.VIIRS_1KM_GEOMETRY_FIELDS["solar_zenith"],
+            constants.VIIRS_1KM_GEOMETRY_FIELDS["solar_azimuth"],
+        ]
+
+        geom = np.stack(
             [
                 zoom(
                     ds["HDFEOS"]["GRIDS"]["VIIRS_Grid_1km_2D"]["Data Fields"][f][
@@ -194,22 +230,35 @@ class SpiresData:
                     2,
                     order=1,
                 )
-                for f in ["SensorAzimuth_1", "SensorZenith_1"]
+                for f in geom_fields
             ],
             axis=0,
         )
 
-        warped_angles = self._warp_data(sensor_angles, transform, constants.VIIRS_MODIS_CRS)
+        if self.config.option.resampling_method is not None:
 
+            west = ds.getncattr("WestBoundingCoord")
+            north = ds.getncattr("NorthBoundingCoord")
+            west, north = Transformer.from_crs(
+                "EPSG:4326", constants.VIIRS_MODIS_CRS, always_xy=True
+            ).transform(west, north)
 
+            transform = Affine(
+                self.sensor_resolution, 0, west, 0, -self.sensor_resolution, north
+            )
+
+            data = self._warp_data(data, transform, constants.VIIRS_MODIS_CRS)
+
+            # VZA, VAA, SZA, SAA
+            # geom[..., 0], geom[..., 1], geom[..., 2], geom[..., 3]
+            geom = self._warp_data(geom, transform, constants.VIIRS_MODIS_CRS)
+        
         # Determine if we need to apply correction based on sensor/version
-        if not self.config.option.ignore_topography_correction:
-            warped_target = self._determine_topo_correction(warped_target)
+        #if not self.config.option.ignore_topography_correction:
+        #    warped_target = self._determine_topo_correction(warped_target)
 
-        return warped_target, warped_angles[..., 1], warped_angles[..., 0]
-
-
-
+        
+        return data, geom
 
 
 
@@ -218,7 +267,12 @@ class SpiresData:
 
 
 
-    def _load_s2(self) -> tuple[npt.NDArray[np.float32], ...]:
+    def _load_s2(self) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
+
+        # ? bands = self.config.sensor.selected_bands or (
+        #    list(constants.VIIRS_500M_REFLECTANCE_BANDS) + 
+        #    list(constants.VIIRS_1KM_REFLECTANCE_BANDS)
+        #)
 
         pass
     
@@ -227,13 +281,12 @@ class SpiresData:
 
 
 
-    def _load_emit(self, img_file: Path) -> tuple[npt.NDArray[np.float32], ...]:
-        """
-        For .NC files like how you would download from Earthdata Search
-        
-        TODO EMIT for each band that has bad data has -0.01 (e.g., at water vapor absorption features)
+    def _load_emit(self, img_file: Path) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
 
-        """
+        # ? bands = self.config.sensor.selected_bands or (
+        #    list(constants.VIIRS_500M_REFLECTANCE_BANDS) + 
+        #    list(constants.VIIRS_1KM_REFLECTANCE_BANDS)
+        #)
 
         with nc.Dataset(img_file) as ds:
             glt_x = ds.groups['location']['glt_x'][:].flatten().astype(int) - 1
@@ -242,38 +295,47 @@ class SpiresData:
 
         with xr.open_dataset(img_file) as ds:
             downtrack, crosstrack, bands = ds.reflectance.shape
-            data = ds["reflectance"].values.reshape(-1, bands).astype(np.float32)
+            raw_data = ds["reflectance"].values.reshape(-1, bands).astype(np.float32)
 
         valid_mask = (glt_x >= 0) & (glt_y >= 0)
         valid_indices = glt_y[valid_mask] * crosstrack + glt_x[valid_mask]
         
-        unwarped_flat = np.full((bands, rows * cols), np.nan, dtype=np.float32)
-        unwarped_flat[:, valid_mask] = data[valid_indices].T
-
-        src_transform = Affine(ds.geotransform[1],  ds.geotransform[2],  
-                               ds.geotransform[0],  ds.geotransform[4],  
-                               ds.geotransform[5], ds.geotransform[3])
-        
-        warped_target = self._warp_data(unwarped_flat.reshape(bands, rows, cols), 
-                                        src_transform, 
-                                        'EPSG:4326')
-        
+        data = np.full((bands, rows * cols), np.nan, dtype=np.float32)
+        data[:, valid_mask] = raw_data[valid_indices].T
+     
         # NOTE Assumes near-nadir for ISS EMIT observation
-        rows, cols, _ = warped_target.shape
+        rows, cols, _ = data.shape
         vza = np.zeros((rows, cols), dtype=np.float32)
         vaa = np.zeros((rows, cols), dtype=np.float32)
 
+        # TODO SZA SAA from pysolar because not in reflectance data product
+        sza = np.zeros((rows, cols), dtype=np.float32)
+        saa = np.zeros((rows, cols), dtype=np.float32)     
+
+        geom = np.stack([vza, vaa, sza, saa])
+
         # Determine if we need to apply correction based on sensor/version
-        if not self.config.option.ignore_topography_correction:
-            warped_target = self._determine_topo_correction(warped_target)
+        #if not self.config.option.ignore_topography_correction:
+        #    warped_target = self._determine_topo_correction(warped_target)
         
         # Apply cleaning of some noisy wavelengths around deep water features
         mask = (self.wavelength < 495) | \
                ((self.wavelength >= 1325) & (self.wavelength < 1468)) | \
                ((self.wavelength >= 1765) & (self.wavelength <= 1967))
-        warped_target[..., mask] = np.nan
+        data[..., mask] = np.nan
 
-        return warped_target, vza, vaa
+
+        if self.config.option.resampling_method is not None:
+            src_transform = Affine(ds.geotransform[1],  ds.geotransform[2],  
+                                ds.geotransform[0],  ds.geotransform[4],  
+                                ds.geotransform[5], ds.geotransform[3])
+            
+            data = self._warp_data(data.reshape(bands, rows, cols), 
+                                            src_transform, 
+                                            'EPSG:4326')
+
+
+        return data, geom
 
 
 
@@ -382,8 +444,13 @@ class SpiresData:
 
 
 
+
+
+
+
     def _apply_shadow_mask(self) -> npt.NDArray[np.float32]:
-        """TODO can store this too in memory for user"""
+        """TODO can store this too in memory for user
+        """
         rows, cols = self.dem.shape
         pixel_list = [(i, j) for i in range(rows) for j in range(cols)]
         results = Parallel(n_jobs=self.config.option.cpu_cores)(
@@ -498,7 +565,6 @@ class SpiresData:
 
 # TESTING
 data = SpiresData("/Users/bawilder/Code/SPIReS/spires-io/example_config.json")
-print(data.config.sensor.wavelength)
 
 data.load()
 
