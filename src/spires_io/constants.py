@@ -124,6 +124,9 @@ VIIRS_MODIS_CRS = (
     'PARAMETER["longitude_of_center",0],PARAMETER["false_easting",0],'
     'PARAMETER["false_northing",0],UNIT["Meter",1]]'
 )
+MIN_ZENITH = 0.0
+MAX_ZENITH = 90.0
+
 
 
 # For topographic correction
@@ -132,6 +135,7 @@ MIN_AOD = 0.03
 MAX_AOD = 1.0
 MIN_H2O = 0.2
 MAX_H2O = 5.0
+
 
 # STATIC DATA
 STATIC_DATA = ["canopy_fraction", "dem", "slope", "aspect", "skyview"] 

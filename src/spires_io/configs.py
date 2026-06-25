@@ -30,10 +30,7 @@ class FilesConfig:
                 )
 
             path = Path(path)
-            if not path.is_file():
-                raise FileNotFoundError(
-                    f"The following data ({f}) were not found at: {path}"
-                )
+            
             if path.is_file() and path.suffix.lower() not in constants.VALID_EXTENSIONS:
                 raise ValueError(f"{path} has invalid file type: {path.suffix}")
 
@@ -110,6 +107,9 @@ class OptionsConfig:
     average_horizontal_crown_radius: float = 1.72
     atmosphere_aod: float = 0.10
     atmosphere_watervapor_gcm2: float = 0.5
+    max_sensor_zenith: float = 65.0
+    max_solar_zenith: float = 85.0
+
 
     def __post_init__(self) -> None:
         if self.cpu_cores < 1:
@@ -130,6 +130,15 @@ class OptionsConfig:
         self.atmosphere_watervapor_gcm2 = max(
             constants.MIN_H2O, min(self.atmosphere_watervapor_gcm2, constants.MAX_H2O)
         )
+
+        self.max_sensor_zenith = max(
+            constants.MIN_ZENITH, min(self.max_sensor_zenith, constants.MAX_ZENITH)
+        )
+
+        self.max_solar_zenith = max(
+            constants.MIN_ZENITH, min(self.max_solar_zenith, constants.MAX_ZENITH)
+        )
+
 
 
 @dataclass

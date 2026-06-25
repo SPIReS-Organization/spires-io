@@ -147,10 +147,13 @@ class SpiresData:
         self.solar_zenith = np.stack([r[1][..., 2] for r in data], axis=-1)
         self.solar_azimuth = np.stack([r[1][..., 3] for r in data], axis=-1)
 
-        print(self.target_spectra.shape)
-        print(self.sensor_zenith.shape)
-        print(self.sensor_azimuth.shape)
-        print(self.solar_zenith.shape)
+        # Mask out high zenith angles based on config option
+        mask = (self.solar_zenith > self.config.option.max_solar_zenith) | \
+            (self.sensor_zenith > self.config.option.max_sensor_zenith)
+
+        self.target_spectra[..., :, :] = np.where(mask[:, :, np.newaxis, :], 
+                                                  np.nan, 
+                                                  self.target_spectra[..., :, :])
 
         # Apply canopy correction with respect to image(s) VZA and terrain if given
         if self.canopy_fraction is not None and self.config.option.canopy_vza_adjustment:
@@ -163,7 +166,6 @@ class SpiresData:
         # TODO to look at, was water mask in VIIRS and MODIS layers? how to handle if so, with different sensors
         #
 
-        
 
         print(self.target_spectra.shape)
         print(self.sensor_zenith.shape)
