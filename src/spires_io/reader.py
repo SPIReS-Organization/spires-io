@@ -64,49 +64,55 @@ class SpiresData:
         
         # Load all static data first
         for f in constants.STATIC_DATA:
-            with rio.open(getattr(self.config.files, f)) as src:
-                data = src.read().squeeze()
-                if self.config.option.resampling_method is not None:
-                    if f != "aspect":
-                        data = self._warp_data(data, src.transform, src.crs)
-                    else:
-                        sin_aspect = np.sin(np.radians(data))
-                        cos_aspect = np.cos(np.radians(data))
-                        aspect_data = np.stack([sin_aspect, cos_aspect], axis=0)
-                        aspect_data_warped = self._warp_data(
-                            aspect_data, src.transform, src.crs
-                        )
-                        data = (
-                            np.degrees(
-                                np.arctan2(
-                                    aspect_data_warped[..., 0], aspect_data_warped[..., 1]
-                                )
+            path = getattr(self.config.files, f)
+            if path is not None:
+                with rio.open(path) as src:
+                    data = src.read().squeeze()
+                    if self.config.option.resampling_method is not None:
+                        if f != "aspect":
+                            data = self._warp_data(data, src.transform, src.crs)
+                        else:
+                            sin_aspect = np.sin(np.radians(data))
+                            cos_aspect = np.cos(np.radians(data))
+                            aspect_data = np.stack([sin_aspect, cos_aspect], axis=0)
+                            aspect_data_warped = self._warp_data(
+                                aspect_data, src.transform, src.crs
                             )
-                            % 360
-                        )
-                        data = data[..., np.newaxis]
+                            data = (
+                                np.degrees(
+                                    np.arctan2(
+                                        aspect_data_warped[..., 0], aspect_data_warped[..., 1]
+                                    )
+                                )
+                                % 360
+                            )
+                            data = data[..., np.newaxis]
 
-                if f == "canopy_fraction":
-                    if np.nanmax(data) > 1.0:
-                        data = data / 100.0
-                    data[np.isnan(data)] = 0.0
-                    data[data>100.0] = np.nan
+                    if f == "canopy_fraction":
+                        if np.nanmax(data) > 1.0:
+                            data = data / 100.0
+                        data[np.isnan(data)] = 0.0
+                        data[data>100.0] = np.nan
+                        self.canopy_fraction = data
 
-                if f == "slope":
-                    data[data<0.0] = np.nan
-                    data[data>90.0] = np.nan
-                if f == "aspect":
-                    data[data<0.0] = np.nan
-                    data[data>360.0] = np.nan
-                if f == "dem":
-                    data[data>8000.0] = np.nan
-                    data[data<-1000.0] = np.nan
-                if f == "skyview":
-                    data[data>1.0] = np.nan
-                    data[data<0.0] = np.nan
+                    if f == "slope":
+                        data[data<0.0] = np.nan
+                        data[data>90.0] = np.nan
+                        self.slope = data
+                    if f == "aspect":
+                        data[data<0.0] = np.nan
+                        data[data>360.0] = np.nan
+                        self.aspect = data
+                    if f == "dem":
+                        data[data>8000.0] = np.nan
+                        data[data<-1000.0] = np.nan
+                        self.dem = data
+                    if f == "skyview":
+                        data[data>1.0] = np.nan
+                        data[data<0.0] = np.nan
+                        self.skyview = data
 
 
-                
         # Now the image data
         img_path = Path(self.config.files.image_data)
 
@@ -146,9 +152,12 @@ class SpiresData:
         print(self.sensor_azimuth.shape)
         print(self.solar_zenith.shape)
 
+        # Apply canopy correction with respect to image(s) VZA and terrain if given
+        if self.canopy_fraction is not None and self.config.option.canopy_vza_adjustment:
+            self._go_viewable_gap_fraction_adjustment() 
+
         # Next, load r0 - background spectra
         self.background_spectra = self._load_r0()
-
 
         # Then, we load any sort of masks that were passed
         # TODO to look at, was water mask in VIIRS and MODIS layers? how to handle if so, with different sensors
@@ -240,11 +249,6 @@ class SpiresData:
         #)
 
 
-
-        # Determine if we need to apply correction based on sensor/version
-        #if not self.config.option.ignore_topography_correction:
-        #    self._determine_topo_correction()
-
         pass
 
 
@@ -309,12 +313,7 @@ class SpiresData:
             data = self._warp_data(data, transform, constants.VIIRS_MODIS_CRS)
 
             # VZA, VAA, SZA, SAA
-            # geom[..., 0], geom[..., 1], geom[..., 2], geom[..., 3]
             geom = self._warp_data(geom, transform, constants.VIIRS_MODIS_CRS)
-        
-        # Determine if we need to apply correction based on sensor/version
-        #if not self.config.option.ignore_topography_correction:
-        #    warped_target = self._determine_topo_correction(warped_target)
 
         
         return data, geom
@@ -399,10 +398,6 @@ class SpiresData:
         saa = interp(tl[1], tr[1], bl[1], br[1]).astype(np.float32)
 
         geom = np.stack([vza, vaa, sza, saa])
-
-        # Determine if we need to apply correction based on sensor/version
-        #if not self.config.option.ignore_topography_correction:
-        #    warped_target = self._determine_topo_correction(warped_target)
         
         # Apply cleaning of some noisy wavelengths around deep water features
         mask = (self.config.sensor.wavelength < 495) | \
@@ -432,15 +427,25 @@ class SpiresData:
 
 
     def _go_viewable_gap_fraction_adjustment(self) -> None:
+        
+        if self.slope is None:
+            slope = 0.0
+        else:
+            slope = self.slope
+        
+        if self.aspect is None:
+            aspect = 0.0
+        else:
+            aspect = self.aspect
 
         # See Liu et al 2008 for example. Default is b_R=2.7 to represent Lodgepole Pine (Bair et al., 2021).
         b_R = self.config.option.average_vertical_crown_radius / self.config.option.average_horizontal_crown_radius
         
-        theta_v_prime = np.arctan(b_R * np.tan(np.radians(self.vza)))
+        theta_v_prime = np.arctan(b_R * np.tan(np.radians(self.sensor_zenith)))
         theta_s_prime = np.radians(
-            90 - np.degrees(np.arctan((b_R * np.tan(np.radians(90 - self.slope)))))
+            90 - np.degrees(np.arctan((b_R * np.tan(np.radians(90 - slope)))))
         )
-        phi_v_prime = np.radians(self.vaa - self.aspect)
+        phi_v_prime = np.radians(self.sensor_azimuth - aspect)
         self.canopy_fraction = 1 - (
             (1 - self.canopy_fraction)
             ** (

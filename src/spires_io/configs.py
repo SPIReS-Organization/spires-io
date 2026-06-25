@@ -104,8 +104,8 @@ class OptionsConfig:
     use_custom_sensor_resolution: bool = False
     clustering_method: Optional[str] = None
     ignore_cloudmask_for_clustering: bool = False
-    canopy_vza_adjustment: bool = True
-    ignore_topography_correction: bool = False
+    canopy_vza_adjustment: bool = False
+    ignore_topography_correction: bool = True
     average_vertical_crown_radius: float = 4.644
     average_horizontal_crown_radius: float = 1.72
     atmosphere_aod: float = 0.10
@@ -171,6 +171,10 @@ class SpiresConfig:
         self.option = OptionsConfig(**data.get("options", {}))
         self.lut = LookUpTableConfig(**data.get("lut", {}))
         self.inv = InversionConfig(**data.get("inversion", {}))
+
+        if self.option.canopy_vza_adjustment:
+            if self.files.canopy_fraction is None:
+                raise ValueError(f"If setting canopy vza adjustment to be true a canopy fraction data must be provided.")
 
         if self.option.ignore_topography_correction:
             self.sensor.apply_topo_correction = False
