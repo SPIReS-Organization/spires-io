@@ -143,15 +143,25 @@ class SpiresData:
         print(self.sensor_zenith.shape)
         print(self.sensor_azimuth.shape)
         print(self.solar_zenith.shape)
-        import matplotlib.pyplot as plt
-        plt.imshow(self.spectrum_target[:,:,0])
-        plt.show()
-
 
         # Next is # r0, 
         # cloudmask, watermask?
-
+        # for r0, maybe it is best to assume this is similar to just another static data?
+        self.background_spectra = self._load_r0()
         
+
+        print(self.spectrum_target.shape)
+        print(self.sensor_zenith.shape)
+        print(self.sensor_azimuth.shape)
+        print(self.solar_zenith.shape)
+        import matplotlib.pyplot as plt
+        plt.imshow(self.background_spectra[:,:,0])
+        plt.show()
+
+
+
+
+        # TODO Critically before ending load, we should ensure row,cols match between all data.
 
 
         pass
@@ -169,6 +179,25 @@ class SpiresData:
     #####
     #####
 
+    def _load_r0(self) -> npt.NDArray[np.float32]:
+
+        r0_path = Path(self.config.files.snowfree_image)
+
+        # Handle if the user just gives an r0 that is a sensor file
+        # which is valid, especially if there is limited data
+        if r0_path.suffix.lower() in [".h5", ".nc"]:
+            r0 , _ = self.load_sensor_data(r0_path)
+        else:
+            # Otherwise, we will assume the r0 is a something we can open with rasterio
+            with rio.open(self.config.files.snowfree_image) as src:
+                r0 = src.read()
+                if self.config.option.resampling_method is not None:
+                    r0 = self._warp_data(r0, src.transform, src.crs)
+
+        if r0.shape[-1] != self.spectrum_target.shape[2]:
+             raise ValueError(f"Snow free image has different number of bands (len={len(r0.shape[-1])}) compared to input wavelengths (len={len(self.spectrum_target.shape[2])}))")
+        
+        return r0.astype(np.float32)
 
 
 
