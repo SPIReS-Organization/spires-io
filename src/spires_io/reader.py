@@ -32,18 +32,18 @@ class SpiresData:
         self.sensor_name = self.config.sensor.name.lower()
         self.sensor_resolution = self.config.sensor.resolution
 
-        self.dem = 0.0
-        self.slope = 0.0
-        self.skyview = 1.0
-        self.aspect = 0.0
-        self.canopy_fraction = 0.0
-
+        self.dem = None
+        self.slope = None
+        self.skyview = None
+        self.aspect = None
+        self.canopy_fraction = None
         self.sensor_zenith = None
         self.sensor_azimuth = None
         self.solar_zenith = None
         self.solar_azimuth = None
         self.target_spectra = None
         self.background_spectra = None
+
         self.lut_dir = None
         self.lut_dif = None
 
@@ -133,24 +133,28 @@ class SpiresData:
         else:
             data = [self.load_sensor_data(f) for f in img_files]
         
-        self.spectrum_target = np.stack([r[0] for r in data], axis=-1)
+        self.target_spectra = np.stack([r[0] for r in data], axis=-1)
         self.sensor_zenith = np.stack([r[1][..., 0] for r in data], axis=-1)
         self.sensor_azimuth = np.stack([r[1][..., 1] for r in data], axis=-1)
         self.solar_zenith = np.stack([r[1][..., 2] for r in data], axis=-1)
         self.solar_azimuth = np.stack([r[1][..., 3] for r in data], axis=-1)
 
-        print(self.spectrum_target.shape)
+        print(self.target_spectra.shape)
         print(self.sensor_zenith.shape)
         print(self.sensor_azimuth.shape)
         print(self.solar_zenith.shape)
 
-        # Next is # r0, 
-        # cloudmask, watermask?
-        # for r0, maybe it is best to assume this is similar to just another static data?
+        # Next, load r0 - background spectra
         self.background_spectra = self._load_r0()
+
+
+        # Then, we load any sort of masks that were passed
+        # TODO to look at, was water mask in VIIRS and MODIS layers? how to handle if so, with different sensors
+        #
+
         
 
-        print(self.spectrum_target.shape)
+        print(self.target_spectra.shape)
         print(self.sensor_zenith.shape)
         print(self.sensor_azimuth.shape)
         print(self.solar_zenith.shape)
@@ -159,12 +163,9 @@ class SpiresData:
         plt.show()
 
 
+        self._validate_dimensions()
 
 
-        # TODO Critically before ending load, we should ensure row,cols match between all data.
-
-
-        pass
 
     def cluster(self, method) -> None:   
         pass
@@ -178,6 +179,33 @@ class SpiresData:
     #####
     #####
     #####
+
+
+    def _validate_dimensions(self) -> None:
+
+        ref_shape = self.target_spectra.shape[:2]
+        
+        attrs_to_check = {
+            "dem": self.dem,
+            "slope": self.slope,
+            "skyview": self.skyview,
+            "aspect": self.aspect,
+            "canopy_fraction": self.canopy_fraction,
+            "sensor_zenith": self.sensor_zenith,
+            "sensor_azimuth": self.sensor_azimuth,
+            "solar_zenith": self.solar_zenith,
+            "solar_azimuth": self.solar_azimuth,
+            "background_spectra": self.background_spectra
+        }
+        
+        for name, data in attrs_to_check.items():
+            if data is not None:
+                if data.shape[:2] != ref_shape:
+                    raise ValueError(
+                        f"Dimension mismatch in '{name}': "
+                        f"Expected {ref_shape}, got {data.shape[:2]}"
+                    )
+                
 
     def _load_r0(self) -> npt.NDArray[np.float32]:
 
@@ -194,8 +222,8 @@ class SpiresData:
                 if self.config.option.resampling_method is not None:
                     r0 = self._warp_data(r0, src.transform, src.crs)
 
-        if r0.shape[-1] != self.spectrum_target.shape[2]:
-             raise ValueError(f"Snow free image has different number of bands (len={len(r0.shape[-1])}) compared to input wavelengths (len={len(self.spectrum_target.shape[2])}))")
+        if r0.shape[-1] != self.target_spectra.shape[2]:
+             raise ValueError(f"Snow free image has different number of bands (len={len(r0.shape[-1])}) compared to input wavelengths (len={len(self.target_spectra.shape[2])}))")
         
         return r0.astype(np.float32)
 
@@ -329,11 +357,12 @@ class SpiresData:
         valid_mask = (glt_x >= 0) & (glt_y >= 0)
         valid_indices = glt_y[valid_mask] * crosstrack + glt_x[valid_mask]
         
-        data = np.full((bands, rows * cols), np.nan, dtype=np.float32)
-        data[:, valid_mask] = raw_data[valid_indices].T
+        flat_data = np.full((bands, rows * cols), np.nan, dtype=np.float32)
+        flat_data[:, valid_mask] = raw_data[valid_indices].T
+        data = flat_data.reshape(bands, rows, cols)
      
         # NOTE Assumes near-nadir for ISS EMIT observation
-        rows, cols, _ = data.shape
+        _, rows, cols = data.shape
         vza = np.zeros((rows, cols), dtype=np.float32)
         vaa = np.zeros((rows, cols), dtype=np.float32)
 
@@ -348,10 +377,10 @@ class SpiresData:
         #    warped_target = self._determine_topo_correction(warped_target)
         
         # Apply cleaning of some noisy wavelengths around deep water features
-        mask = (self.wavelength < 495) | \
-               ((self.wavelength >= 1325) & (self.wavelength < 1468)) | \
-               ((self.wavelength >= 1765) & (self.wavelength <= 1967))
-        data[..., mask] = np.nan
+        mask = (self.config.sensor.wavelength < 495) | \
+               ((self.config.sensor.wavelength >= 1325) & (self.config.sensor.wavelength < 1468)) | \
+               ((self.config.sensor.wavelength >= 1765) & (self.config.sensor.wavelength <= 1967))
+        data[mask, :, :] = np.nan
 
 
         if self.config.option.resampling_method is not None:
@@ -362,6 +391,8 @@ class SpiresData:
             data = self._warp_data(data.reshape(bands, rows, cols), 
                                             src_transform, 
                                             'EPSG:4326')
+            
+            geom = self._warp_data(geom, src_transform, 'EPSG:4326')
 
 
         return data, geom
