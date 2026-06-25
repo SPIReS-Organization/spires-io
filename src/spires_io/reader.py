@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
@@ -18,6 +18,8 @@ from rasterio.warp import Resampling, reproject
 from scipy.ndimage import zoom, map_coordinates
 from scipy.interpolate import RegularGridInterpolator
 from scipy.interpolate import interp1d
+from pysolar.solar import get_altitude, get_azimuth
+
 
 import spires_io.constants as constants
 from spires_io.configs import SpiresConfig
@@ -159,7 +161,7 @@ class SpiresData:
         print(self.sensor_azimuth.shape)
         print(self.solar_zenith.shape)
         import matplotlib.pyplot as plt
-        plt.imshow(self.background_spectra[:,:,0])
+        plt.imshow(self.solar_zenith)
         plt.show()
 
 
@@ -362,13 +364,39 @@ class SpiresData:
         data = flat_data.reshape(bands, rows, cols)
      
         # NOTE Assumes near-nadir for ISS EMIT observation
+        # This could be improved in the future but I don't think EMIT currently supplies vza
+        # with the L2A RFL product - perhaps in the masks?
         _, rows, cols = data.shape
         vza = np.zeros((rows, cols), dtype=np.float32)
         vaa = np.zeros((rows, cols), dtype=np.float32)
 
-        # TODO SZA SAA from pysolar because not in reflectance data product
-        sza = np.zeros((rows, cols), dtype=np.float32)
-        saa = np.zeros((rows, cols), dtype=np.float32)     
+        # Then solar geometry. It is not given from EMIT data but can be estimated from pysolar
+        time_str = ds.attrs["time_coverage_start"]
+        acq_time = datetime.fromisoformat(time_str).astimezone(timezone.utc)
+        src_transform = Affine(ds.geotransform[1], ds.geotransform[2], ds.geotransform[0],
+                               ds.geotransform[4], ds.geotransform[5], ds.geotransform[3])
+        
+        # For speed, we can just solve it for corner data and then do interpolation
+        corner_pixels = [(0, 0), (cols-1, 0), (0, rows-1), (cols-1, rows-1)]
+        coner_data = []
+
+        for c, r in corner_pixels:
+            lon, lat = src_transform * (c, r)
+            alt = get_altitude(lat, lon, acq_time)
+            az = get_azimuth(lat, lon, acq_time)
+            coner_data.append((90 - alt, az))
+
+        y = np.linspace(0, 1, rows)
+        x = np.linspace(0, 1, cols)
+        X, Y = np.meshgrid(x, y)
+
+        tl, tr, bl, br = coner_data[0], coner_data[1], coner_data[2], coner_data[3]
+
+        def interp(tl, tr, bl, br):
+            return (1 - Y) * ((1 - X) * tl + X * tr) + Y * ((1 - X) * bl + X * br)
+
+        sza = interp(tl[0], tr[0], bl[0], br[0]).astype(np.float32)
+        saa = interp(tl[1], tr[1], bl[1], br[1]).astype(np.float32)
 
         geom = np.stack([vza, vaa, sza, saa])
 
@@ -384,10 +412,6 @@ class SpiresData:
 
 
         if self.config.option.resampling_method is not None:
-            src_transform = Affine(ds.geotransform[1],  ds.geotransform[2],  
-                                ds.geotransform[0],  ds.geotransform[4],  
-                                ds.geotransform[5], ds.geotransform[3])
-            
             data = self._warp_data(data.reshape(bands, rows, cols), 
                                             src_transform, 
                                             'EPSG:4326')
