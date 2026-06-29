@@ -17,6 +17,7 @@ from spires_io.configs import SceneManifest, SceneManifestItem, SpiresRunConfig
 from spires_io.loader import SpiresDataLoader
 from spires_io.masks import load_external_mask
 from spires_io.spires_data import SpiresData
+from spires_io.writer import SpiresDataWriter
 
 __all__ = [
     "__version__",
@@ -24,6 +25,7 @@ __all__ = [
     "SceneManifestItem",
     "SpiresData",
     "SpiresDataLoader",
+    "SpiresDataWriter",
     "SpiresRunConfig",
     "describe_sensor",
     "list_supported_sensor_platforms",
