@@ -11,11 +11,15 @@ from spires_io.api import (
     open_surface_reflectance,
     prepare_scene_for_inversion,
 )
+from spires_io.configs import SceneManifest, SceneManifestItem, SpiresRunConfig
 from spires_io.spires_data import SpiresData
 
 __all__ = [
     "__version__",
+    "SceneManifest",
+    "SceneManifestItem",
     "SpiresData",
+    "SpiresRunConfig",
     "describe_sensor",
     "list_supported_sensor_platforms",
     "list_supported_sensors",

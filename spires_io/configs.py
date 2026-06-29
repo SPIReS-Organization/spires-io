@@ -1,10 +1,11 @@
+from collections.abc import Mapping
 import numpy as np
 import importlib.resources
 import json
 import warnings
 from pathlib import Path
-from dataclasses import dataclass
-from typing import Optional, List
+from dataclasses import dataclass, field
+from typing import Any, Optional, List
 
 import spires_io.constants as constants
 
@@ -199,6 +200,181 @@ class InversionConfig:
             and self.nlopt_algorithm == "NLOPT_LN_NELDERMEAD"
         ):
             raise ValueError("Algorithm requires softmax_fractional_covers=True")
+
+
+@dataclass(frozen=True)
+class SpiresRunConfig:
+    """Batch/run-wide policy shared by one or more scene manifest items."""
+
+    sensor: SensorConfig
+    reader_options: dict[str, Any] = field(default_factory=dict)
+    mask_policy: dict[str, Any] = field(default_factory=dict)
+    inversion: InversionConfig = field(default_factory=InversionConfig)
+    clustering: dict[str, Any] = field(default_factory=dict)
+    resampling: dict[str, Any] = field(default_factory=dict)
+    output_policy: dict[str, Any] = field(default_factory=dict)
+    ancillary_paths: dict[str, Any] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_file(cls, config_file: str | Path) -> "SpiresRunConfig":
+        """Read a JSON run config file."""
+        data = _load_json_object(config_file, "run config")
+        return cls.from_mapping(data)
+
+    @classmethod
+    def from_mapping(cls, data: Mapping[str, Any]) -> "SpiresRunConfig":
+        """Build a run config from a JSON-like mapping."""
+        if "sensor" not in data:
+            raise ValueError("run config is missing required key 'sensor'")
+
+        sensor = _parse_sensor_config(data["sensor"])
+        inversion = InversionConfig(**_section_mapping(data, "inversion"))
+
+        known_keys = {
+            "sensor",
+            "reader_options",
+            "mask_policy",
+            "inversion",
+            "clustering",
+            "resampling",
+            "output",
+            "output_policy",
+            "ancillary",
+            "ancillary_paths",
+        }
+
+        return cls(
+            sensor=sensor,
+            reader_options=_section_mapping(data, "reader_options"),
+            mask_policy=_section_mapping(data, "mask_policy"),
+            inversion=inversion,
+            clustering=_section_mapping(data, "clustering"),
+            resampling=_section_mapping(data, "resampling"),
+            output_policy=_section_mapping(data, "output_policy", alias="output"),
+            ancillary_paths=_section_mapping(data, "ancillary_paths", alias="ancillary"),
+            extra={key: value for key, value in data.items() if key not in known_keys},
+        )
+
+
+@dataclass(frozen=True)
+class SceneManifestItem:
+    """Concrete paths and metadata for one scene in a batch manifest."""
+
+    image_path: str
+    background_image: str
+    output_path: Optional[str] = None
+    tile: Optional[str] = None
+    water_year: Optional[int | str] = None
+    date: Optional[str] = None
+    masks: dict[str, Any] = field(default_factory=dict)
+    ancillary: dict[str, Any] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_mapping(
+        cls,
+        data: Mapping[str, Any],
+        *,
+        item_index: int,
+    ) -> "SceneManifestItem":
+        """Build a manifest item from a JSON-like mapping."""
+        for key in ("image_path", "background_image"):
+            if key not in data:
+                raise ValueError(f"manifest scene {item_index} is missing required key {key!r}")
+
+        known_keys = {
+            "image_path",
+            "background_image",
+            "output_path",
+            "tile",
+            "water_year",
+            "date",
+            "masks",
+            "ancillary",
+        }
+
+        return cls(
+            image_path=data["image_path"],
+            background_image=data["background_image"],
+            output_path=data.get("output_path"),
+            tile=data.get("tile"),
+            water_year=data.get("water_year"),
+            date=data.get("date"),
+            masks=_section_mapping(data, "masks"),
+            ancillary=_section_mapping(data, "ancillary"),
+            extra={key: value for key, value in data.items() if key not in known_keys},
+        )
+
+
+@dataclass(frozen=True)
+class SceneManifest:
+    """JSON manifest containing concrete scene work items."""
+
+    scenes: list[SceneManifestItem]
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_file(cls, manifest_file: str | Path) -> "SceneManifest":
+        """Read a JSON scene manifest file."""
+        data = _load_json_object(manifest_file, "scene manifest")
+        return cls.from_mapping(data)
+
+    @classmethod
+    def from_mapping(cls, data: Mapping[str, Any]) -> "SceneManifest":
+        """Build a scene manifest from a JSON-like mapping."""
+        if "scenes" not in data:
+            raise ValueError("scene manifest is missing required key 'scenes'")
+        if not isinstance(data["scenes"], list):
+            raise ValueError("scene manifest key 'scenes' must be a list")
+
+        scenes = []
+        for index, item in enumerate(data["scenes"]):
+            if not isinstance(item, Mapping):
+                raise ValueError(f"manifest scene {index} must be an object")
+            scenes.append(SceneManifestItem.from_mapping(item, item_index=index))
+
+        return cls(
+            scenes=scenes,
+            extra={key: value for key, value in data.items() if key != "scenes"},
+        )
+
+
+def _load_json_object(path: str | Path, label: str) -> dict[str, Any]:
+    path = Path(path)
+    if path.suffix.lower() != ".json":
+        raise ValueError(f"{label} loading supports JSON files only")
+
+    with path.open("r") as f:
+        data = json.load(f)
+
+    if not isinstance(data, Mapping):
+        raise ValueError(f"{label} must contain a JSON object")
+    return dict(data)
+
+
+def _parse_sensor_config(data: Any) -> SensorConfig:
+    if isinstance(data, str):
+        return SensorConfig(name=data)
+    if isinstance(data, Mapping):
+        return SensorConfig(**dict(data))
+    raise ValueError("run config key 'sensor' must be a string or object")
+
+
+def _section_mapping(
+    data: Mapping[str, Any],
+    key: str,
+    *,
+    alias: Optional[str] = None,
+) -> dict[str, Any]:
+    value = data.get(key)
+    if value is None and alias is not None:
+        value = data.get(alias)
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(f"config section {key!r} must be an object")
+    return dict(value)
 
 
 class SpiresConfig:
