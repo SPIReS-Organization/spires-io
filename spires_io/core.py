@@ -200,9 +200,14 @@ class SpiresData:
         self._validate_dimensions()
 
     def cluster(self, method) -> None:
+        # TODO
+        # Ross' method : https://github.com/SPIReS-Organization/spires-inversion/pull/4
+        # with some adaption above can fit nicely into here I believe
         pass
 
     def write(self, spires_inversion_results, output_dir=None) -> None:
+
+        # TODO not implemented
 
         # Determine if output dir is a path or folder
         # dont allow file
@@ -404,14 +409,7 @@ class SpiresData:
 
     def _load_s2(self) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
 
-        # ? bands = self.config.sensor.selected_bands or (
-        #    list(constants.VIIRS_500M_REFLECTANCE_BANDS) +
-        #    list(constants.VIIRS_1KM_REFLECTANCE_BANDS)
-        # )
-
-        # if self.config.sensor.apply_topo_correction:
-        #    self._perform_topo_correction()
-
+        # TODO not implemented
         pass
 
     def _load_emit(
@@ -493,10 +491,6 @@ class SpiresData:
         )
         data[mask, :, :] = np.nan
 
-        # Apply user band mask if given
-        # if self.config.sensor.selected_bands is not None:
-        #    data = data[np.isin(np.arange(data.shape[0]), self.config.sensor.selected_bands), :, :]
-
         if self.config.option.resampling_method is not None:
             data = self._warp_data(
                 data.reshape(bands, rows, cols), src_transform, constants.EMIT_CRS
@@ -504,14 +498,80 @@ class SpiresData:
 
             geom = self._warp_data(geom, src_transform, constants.EMIT_CRS)
 
-        # if self.config.sensor.apply_topo_correction:
-        #    data = self._perform_topo_correction(image=data,
-        #                                         sza=geom[..., 2],
-        #                                         saa=geom[..., 3])
-
         ds.close()
 
         return data, geom
+
+    def _warp_data(self, source, src_transform, src_crs) -> npt.NDArray[np.float32]:
+
+        src_crs_obj = CRS.from_string(src_crs) if isinstance(src_crs, str) else src_crs
+        dst_crs_obj = CRS.from_string(self.config.option.target_crs)
+
+        left, bottom, right, top = self.config.option.target_bbox
+        method = getattr(Resampling, self.config.option.resampling_method.lower())
+
+        x_res = self.sensor_resolution
+        y_res = self.sensor_resolution
+        width = int((right - left) / x_res)
+        height = int((top - bottom) / y_res)
+
+        dst_transform = rio.transform.from_origin(left, top, x_res, y_res)
+
+        if source.ndim == 2:
+            source = source[np.newaxis, ...]
+        source = source.astype(np.float32)
+
+        bands, _, _ = source.shape
+        dst_array = np.zeros((bands, height, width), dtype=np.float32)
+
+        for i in range(bands):
+            src_band = np.ascontiguousarray(source[i, :, :])
+            dst_band = np.zeros((height, width), dtype=np.float32)
+
+            reproject(
+                source=src_band,
+                destination=dst_band,
+                src_transform=src_transform,
+                src_crs=src_crs_obj,
+                dst_transform=dst_transform,
+                dst_crs=dst_crs_obj,
+                resampling=method,
+            )
+            dst_array[i, :, :] = dst_band
+
+        return dst_array.transpose(1, 2, 0)
+
+    def _filter_by_date(self, file_list: List[Path]) -> List[Path]:
+        if not (self.config.option.start_date or self.config.option.end_date):
+            return sorted(file_list)
+
+        start = (
+            datetime.strptime(self.config.option.start_date, "%Y-%m-%d")
+            if self.config.option.start_date
+            else datetime.min
+        )
+        end = (
+            datetime.strptime(self.config.option.end_date, "%Y-%m-%d")
+            if self.config.option.end_date
+            else datetime.max
+        )
+
+        filtered = []
+        for f in file_list:
+            f_date = self._get_date_from_str(f.name)
+            if f_date and (start <= f_date <= end):
+                filtered.append(f)
+        return sorted(filtered)
+
+    def _get_date_from_str(self, filename: str) -> Optional[datetime]:
+        parts = re.findall(r"\d+", filename)
+        for part in parts:
+            for fmt in ("%Y%j", "%Y%m%d"):
+                try:
+                    return datetime.strptime(part, fmt)
+                except ValueError:
+                    continue
+        return None
 
     def _go_viewable_gap_fraction_adjustment(self) -> None:
 
@@ -548,6 +608,8 @@ class SpiresData:
         )
 
     def _perform_topo_correction(self, image, sza, saa) -> npt.NDArray[np.float32]:
+
+        # TODO not implemented
 
         sza = sza.squeeze()
         saa = saa.squeeze()
@@ -631,6 +693,7 @@ class SpiresData:
 
     def _apply_shadow_mask(self) -> npt.NDArray[np.float32]:
         """TODO can store this too in memory for user"""
+        # TODO not implemented
         rows, cols = self.dem.shape[:2]
         pixel_list = [(i, j) for i in range(rows) for j in range(cols)]
         results = Parallel(n_jobs=self.config.option.cpu_cores)(
@@ -640,7 +703,7 @@ class SpiresData:
         return shadow_mask[..., np.newaxis]
 
     def _ray_trace_pixel(self, i, j):
-
+        # TODO not implemented
         pix_size = self.sensor_resolution
         i_lim, j_lim = self.dem.shape[:2]
 
@@ -669,74 +732,3 @@ class SpiresData:
 
         # 0 = shadow ; 1=no shadow
         return 0 if ((h[1:] < zi[1:]).any()) else 1
-
-    def _warp_data(self, source, src_transform, src_crs) -> npt.NDArray[np.float32]:
-
-        src_crs_obj = CRS.from_string(src_crs) if isinstance(src_crs, str) else src_crs
-        dst_crs_obj = CRS.from_string(self.config.option.target_crs)
-
-        left, bottom, right, top = self.config.option.target_bbox
-        method = getattr(Resampling, self.config.option.resampling_method.lower())
-
-        x_res = self.sensor_resolution
-        y_res = self.sensor_resolution
-        width = int((right - left) / x_res)
-        height = int((top - bottom) / y_res)
-
-        dst_transform = rio.transform.from_origin(left, top, x_res, y_res)
-
-        if source.ndim == 2:
-            source = source[np.newaxis, ...]
-        source = source.astype(np.float32)
-
-        bands, _, _ = source.shape
-        dst_array = np.zeros((bands, height, width), dtype=np.float32)
-
-        for i in range(bands):
-            src_band = np.ascontiguousarray(source[i, :, :])
-            dst_band = np.zeros((height, width), dtype=np.float32)
-
-            reproject(
-                source=src_band,
-                destination=dst_band,
-                src_transform=src_transform,
-                src_crs=src_crs_obj,
-                dst_transform=dst_transform,
-                dst_crs=dst_crs_obj,
-                resampling=method,
-            )
-            dst_array[i, :, :] = dst_band
-
-        return dst_array.transpose(1, 2, 0)
-
-    def _filter_by_date(self, file_list: List[Path]) -> List[Path]:
-        if not (self.config.option.start_date or self.config.option.end_date):
-            return sorted(file_list)
-
-        start = (
-            datetime.strptime(self.config.option.start_date, "%Y-%m-%d")
-            if self.config.option.start_date
-            else datetime.min
-        )
-        end = (
-            datetime.strptime(self.config.option.end_date, "%Y-%m-%d")
-            if self.config.option.end_date
-            else datetime.max
-        )
-
-        filtered = []
-        for f in file_list:
-            f_date = self._get_date_from_str(f.name)
-            if f_date and (start <= f_date <= end):
-                filtered.append(f)
-        return sorted(filtered)
-
-    def _get_date_from_str(self, filename: str) -> Optional[datetime]:
-        parts = re.findall(r"\d+", filename)
-        for part in parts:
-            for fmt in ("%Y%j", "%Y%m%d"):
-                try:
-                    return datetime.strptime(part, fmt)
-                except ValueError:
-                    continue
-        return None
