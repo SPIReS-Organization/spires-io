@@ -1,6 +1,7 @@
 import numpy as np
 import importlib.resources
 import json
+import warnings
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, List
@@ -8,10 +9,10 @@ from typing import Optional, List
 import spires_io.constants as constants
 
 
-@dataclass
+@dataclass(init=False)
 class FilesConfig:
     image_data: str
-    snowfree_image: str
+    background_image: str
     lut: str
     cloud_mask: Optional[str] = None
     dem: Optional[str] = None
@@ -20,18 +21,61 @@ class FilesConfig:
     skyview: Optional[str] = None
     canopy_fraction: Optional[str] = None
 
+    def __init__(
+        self,
+        image_data: str,
+        lut: str,
+        background_image: Optional[str] = None,
+        snowfree_image: Optional[str] = None,
+        cloud_mask: Optional[str] = None,
+        dem: Optional[str] = None,
+        slope: Optional[str] = None,
+        aspect: Optional[str] = None,
+        skyview: Optional[str] = None,
+        canopy_fraction: Optional[str] = None,
+    ) -> None:
+        if background_image is not None and snowfree_image is not None:
+            raise ValueError(
+                "Use only one of files.background_image or deprecated "
+                "files.snowfree_image"
+            )
+        if background_image is None and snowfree_image is not None:
+            warnings.warn(
+                "files.snowfree_image is deprecated; use files.background_image",
+                FutureWarning,
+                stacklevel=2,
+            )
+            background_image = snowfree_image
+
+        self.image_data = image_data
+        self.background_image = background_image
+        self.lut = lut
+        self.cloud_mask = cloud_mask
+        self.dem = dem
+        self.slope = slope
+        self.aspect = aspect
+        self.skyview = skyview
+        self.canopy_fraction = canopy_fraction
+        self.__post_init__()
+
     def __post_init__(self) -> None:
-        for f in ["image_data", "snowfree_image", "lut"]:
+        for f in ["image_data", "background_image", "lut"]:
             path = getattr(self, f)
             if path is None:
                 raise ValueError(
-                    f"The following data are required: ['image_data', 'snowfree_image','lut']"
+                    "The following data are required: "
+                    "['image_data', 'background_image', 'lut']"
                 )
 
             path = Path(path)
 
             if path.is_file() and path.suffix.lower() not in constants.VALID_EXTENSIONS:
                 raise ValueError(f"{path} has invalid file type: {path.suffix}")
+
+    @property
+    def snowfree_image(self) -> str:
+        """Deprecated compatibility alias for background_image."""
+        return self.background_image
 
 
 @dataclass
