@@ -254,6 +254,13 @@ class SpiresData:
 
         data = np.stack([process_modis_band(b) for b in bands], axis=0)
 
+        # Water mask
+        water_mask_1km = ds.variables["state_1km_1"][:].astype(np.uint16)
+        land_water_bits = (water_mask_1km >> 3) & 0x07
+        water_mask = np.isin(land_water_bits, [0, 2, 3, 4, 5, 6, 7])
+        water_mask_500m = np.repeat(np.repeat(water_mask, 2, axis=0), 2, axis=1)
+        data[:, water_mask_500m] = np.nan
+
         geom_fields = [
             constants.MODIS_1KM_GEOMETRY_FIELDS["sensor_zenith"],
             constants.MODIS_1KM_GEOMETRY_FIELDS["sensor_azimuth"],
@@ -305,6 +312,12 @@ class SpiresData:
             return data if is_500m else zoom(data, 2, order=3)
 
         data = np.stack([process_band(b) for b in bands], axis=0)
+
+        # Water mask
+        water_mask_1km = ds["HDFEOS"]["GRIDS"]["VIIRS_Grid_1km_2D"]["Data Fields"]["land_water_mask_1"][:].astype(np.uint8)
+        water_mask = np.isin(water_mask_1km, [0, 2, 3, 4, 5, 6, 7])
+        water_mask_500m = np.repeat(np.repeat(water_mask, 2, axis=0), 2, axis=1)
+        data[:, water_mask_500m] = np.nan
 
         geom_fields = [
             constants.VIIRS_1KM_GEOMETRY_FIELDS["sensor_zenith"],
