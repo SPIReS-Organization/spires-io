@@ -501,9 +501,14 @@ SENSORS_META = {
     #},
 }
 
+EPS=1e-6
 
 MIN_ZENITH = 0.0
 MAX_ZENITH = 90.0
+MAX_ELEV = 8000.0
+MIN_ELEV = -1000.0
+MAX_SVF = 1.0
+MAX_ASPECT = 360.0 # clockwise from North
 
 
 # Topographic correction

@@ -89,27 +89,27 @@ class SpiresData:
                             data = data[..., np.newaxis]
 
                     if f == "canopy_fraction":
-                        if np.nanmax(data) > 1.0:
+                        if np.nanmax(data) > 1.0+constants.EPS:
                             data = data / 100.0
                         data[np.isnan(data)] = 0.0
-                        data[data > 100.0] = np.nan
+                        data[data > 1.0+constants.EPS] = np.nan
                         self.canopy_fraction = data
 
                     if f == "slope":
                         data[data < 0.0] = np.nan
-                        data[data > 90.0] = np.nan
+                        data[data > constants.MAX_ZENITH] = np.nan
                         self.slope = data
                     if f == "aspect":
                         data[data < 0.0] = np.nan
-                        data[data > 360.0] = np.nan
+                        data[data > constants.MAX_ASPECT] = np.nan
                         self.aspect = data
                     if f == "dem":
-                        data[data > 8000.0] = np.nan
-                        data[data < -1000.0] = np.nan
+                        data[data > constants.MAX_ELEV] = np.nan
+                        data[data < constants.MIN_ELEV] = np.nan
                         self.dem = data
                     if f == "skyview":
-                        data[data > 1.0] = np.nan
-                        data[data < 0.0] = np.nan
+                        data[data > constants.MAX_SVF] = np.nan
+                        data[data < 0.0 + constants.EPS] = np.nan
                         self.skyview = data
 
         # Now the image data
