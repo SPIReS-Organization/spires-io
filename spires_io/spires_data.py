@@ -36,6 +36,13 @@ class SpiresData:
             data = data.assign_background(background)
         return data
 
+    @classmethod
+    def from_config(cls, config_file: str) -> "SpiresData":
+        """Load a single-scene config through :class:`SpiresDataLoader`."""
+        from spires_io.loader import SpiresDataLoader
+
+        return SpiresDataLoader.from_config(config_file).load()
+
     @property
     def target_spectra(self) -> xr.DataArray:
         """Prepared target reflectance spectra."""

@@ -12,6 +12,7 @@ from spires_io.api import (
     prepare_scene_for_inversion,
 )
 from spires_io.configs import SceneManifest, SceneManifestItem, SpiresRunConfig
+from spires_io.loader import SpiresDataLoader
 from spires_io.spires_data import SpiresData
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "SceneManifest",
     "SceneManifestItem",
     "SpiresData",
+    "SpiresDataLoader",
     "SpiresRunConfig",
     "describe_sensor",
     "list_supported_sensor_platforms",
