@@ -25,6 +25,59 @@ def _mask_for(scene, values):
     )
 
 
+def _cluster_scene(
+    reflectance=None,
+    solar_zenith=None,
+    valid_mask=None,
+):
+    if reflectance is None:
+        reflectance = np.array(
+            [
+                [[0.2, 0.3], [0.2, 0.3]],
+                [[0.8, 0.9], [0.2, 0.3]],
+            ],
+            dtype=np.float32,
+        )
+    if solar_zenith is None:
+        solar_zenith = np.full((2, 2), 30.0, dtype=np.float32)
+    if valid_mask is None:
+        valid_mask = np.array([[True, True], [True, False]], dtype=bool)
+
+    return xr.Dataset(
+        {
+            "reflectance": xr.DataArray(
+                reflectance,
+                dims=("y", "x", "band"),
+                coords={"y": [0, 1], "x": [10, 11], "band": ["a", "b"]},
+                name="reflectance",
+            ),
+            "solar_zenith": xr.DataArray(
+                solar_zenith,
+                dims=("y", "x"),
+                coords={"y": [0, 1], "x": [10, 11]},
+                name="solar_zenith",
+            ),
+            "valid_inversion_mask": xr.DataArray(
+                valid_mask,
+                dims=("y", "x"),
+                coords={"y": [0, 1], "x": [10, 11]},
+                name="valid_inversion_mask",
+            ),
+        }
+    )
+
+
+def _cluster_background(scene, values=None):
+    if values is None:
+        values = np.ones(scene["reflectance"].shape, dtype=np.float32)
+    return xr.DataArray(
+        values,
+        dims=("y", "x", "band"),
+        coords={dim: scene.coords[dim].values for dim in ("y", "x", "band")},
+        name="background_reflectance",
+    )
+
+
 def _without_spatial_ref(data_array):
     return data_array.drop_vars("spatial_ref", errors="ignore")
 
@@ -184,3 +237,131 @@ def test_default_cluster_requires_background():
 
     with pytest.raises(ValueError, match="background is required"):
         SpiresData.from_scene(scene).cluster()
+
+
+def test_cluster_reflectance_only_stores_labels_counts_and_representatives():
+    data = SpiresData.from_scene(_cluster_scene())
+
+    clustered = data.cluster(features=("reflectance",), representative_method="first_pixel")
+
+    assert clustered is not data
+    assert "cluster_label" not in data.scene
+    assert "cluster_label" in clustered.scene
+    assert "cluster_count" in clustered.scene
+    assert "cluster_representative_reflectance" in clustered.scene
+    assert "cluster_representative_background" not in clustered.scene
+    assert "cluster_representative_solar_zenith" not in clustered.scene
+
+    labels = clustered.scene["cluster_label"]
+    assert labels.sel(y=0, x=10).item() == labels.sel(y=0, x=11).item()
+    assert labels.sel(y=1, x=10).item() != labels.sel(y=0, x=10).item()
+    assert labels.sel(y=1, x=11).item() == -1
+    np.testing.assert_array_equal(clustered.scene["cluster_count"].values, np.array([2, 1]))
+    assert clustered.scene["cluster_representative_reflectance"].dims == ("cluster", "band")
+
+
+def test_cluster_uses_cluster_mean_representatives():
+    reflectance = np.array(
+        [
+            [[0.201, 0.301], [0.209, 0.309]],
+            [[0.7, 0.8], [0.9, 1.0]],
+        ],
+        dtype=np.float32,
+    )
+    valid_mask = np.array([[True, True], [False, False]], dtype=bool)
+    data = SpiresData.from_scene(
+        _cluster_scene(reflectance=reflectance, valid_mask=valid_mask)
+    )
+
+    clustered = data.cluster(features=("reflectance",), tolerance=0.05)
+
+    np.testing.assert_allclose(
+        clustered.scene["cluster_representative_reflectance"].values,
+        np.array([[0.205, 0.305]], dtype=np.float64),
+        rtol=1e-6,
+    )
+    np.testing.assert_array_equal(clustered.scene["cluster_count"].values, np.array([2]))
+
+
+def test_cluster_default_features_store_background_and_solar_representatives():
+    scene = _cluster_scene()
+    background = _cluster_background(scene)
+    data = SpiresData.from_scene(scene, background=background)
+
+    clustered = data.cluster()
+
+    assert "cluster_representative_reflectance" in clustered.scene
+    assert "cluster_representative_background" in clustered.scene
+    assert "cluster_representative_solar_zenith" in clustered.scene
+    assert clustered.scene["cluster_label"].attrs["features"] == (
+        "reflectance,background,solar_zenith"
+    )
+
+
+def test_cluster_background_feature_affects_labels():
+    reflectance = np.full((2, 2, 2), 0.2, dtype=np.float32)
+    background = np.array(
+        [
+            [[0.1, 0.1], [0.4, 0.4]],
+            [[0.1, 0.1], [0.4, 0.4]],
+        ],
+        dtype=np.float32,
+    )
+    scene = _cluster_scene(reflectance=reflectance, valid_mask=np.ones((2, 2), dtype=bool))
+    data = SpiresData.from_scene(scene, background=_cluster_background(scene, background))
+
+    reflectance_only = data.cluster(features=("reflectance",))
+    with_background = data.cluster(features=("reflectance", "background"))
+
+    assert reflectance_only.scene.sizes["cluster"] == 1
+    assert with_background.scene.sizes["cluster"] == 2
+    assert (
+        with_background.scene["cluster_label"].sel(y=0, x=10).item()
+        != with_background.scene["cluster_label"].sel(y=0, x=11).item()
+    )
+
+
+def test_cluster_solar_feature_affects_labels():
+    reflectance = np.full((2, 2, 2), 0.2, dtype=np.float32)
+    solar = np.array([[30.0, 40.0], [30.0, 40.0]], dtype=np.float32)
+    scene = _cluster_scene(
+        reflectance=reflectance,
+        solar_zenith=solar,
+        valid_mask=np.ones((2, 2), dtype=bool),
+    )
+    data = SpiresData.from_scene(scene)
+
+    reflectance_only = data.cluster(features=("reflectance",))
+    with_solar = data.cluster(
+        features=("reflectance", "solar_zenith"),
+        solar_zenith_tol=1.0,
+    )
+
+    assert reflectance_only.scene.sizes["cluster"] == 1
+    assert with_solar.scene.sizes["cluster"] == 2
+    assert (
+        with_solar.scene["cluster_label"].sel(y=0, x=10).item()
+        != with_solar.scene["cluster_label"].sel(y=0, x=11).item()
+    )
+
+
+def test_cluster_preserves_background_ancillary_and_original_data():
+    scene = _cluster_scene()
+    background = _cluster_background(scene)
+    ancillary = xr.Dataset(
+        {
+            "dem": xr.DataArray(
+                np.ones((2, 2), dtype=np.float32),
+                dims=("y", "x"),
+                coords={dim: scene.coords[dim].values for dim in ("y", "x")},
+            )
+        }
+    )
+    data = SpiresData.from_scene(scene, background=background, ancillary=ancillary)
+
+    clustered = data.cluster(features=("reflectance",), label_name="my_cluster_label")
+
+    assert "my_cluster_label" not in data.scene
+    assert "my_cluster_label" in clustered.scene
+    assert clustered.background_spectra.identical(background)
+    assert clustered.ancillary.identical(ancillary)

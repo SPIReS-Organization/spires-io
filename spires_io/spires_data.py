@@ -139,14 +139,15 @@ class SpiresData:
         self,
         *,
         features: Sequence[str] | None = None,
+        label_name: str = "cluster_label",
         valid_mask: xr.DataArray | np.ndarray | None = None,
         representative_method: str = "cluster_mean",
         tolerance: "Tolerance" = 0.02,
         reflectance_tol: "Tolerance | None" = None,
         background_tol: "Tolerance | None" = None,
         solar_zenith_tol: "Tolerance | None" = None,
-    ) -> "ClusteredSpectra":
-        """Cluster valid scene pixels by selected reflectance/context features."""
+    ) -> "SpiresData":
+        """Return a new object with cluster labels and representatives on the scene."""
         from spires_io.clustering import cluster_spectra_block
 
         cluster_valid_mask = (
@@ -155,7 +156,7 @@ class SpiresData:
             else _validate_valid_mask_override(self.scene, valid_mask)
         )
 
-        return cluster_spectra_block(
+        clustered = cluster_spectra_block(
             reflectance=self.target_spectra.values,
             background=None if self.background is None else self.background.values,
             solar_zenith=self.solar_zenith.values,
@@ -166,6 +167,12 @@ class SpiresData:
             reflectance_tol=reflectance_tol,
             background_tol=background_tol,
             solar_zenith_tol=solar_zenith_tol,
+        )
+        scene = _assign_cluster_outputs(self.scene, clustered, label_name=label_name)
+        return SpiresData(
+            scene=scene,
+            background=self.background.copy() if self.background is not None else None,
+            ancillary=self.ancillary.copy() if self.ancillary is not None else None,
         )
 
 
@@ -212,6 +219,84 @@ def _validate_valid_mask_override(
         coords={dim: scene.coords[dim].values for dim in ("y", "x")},
         name="valid_mask",
     )
+
+
+def _assign_cluster_outputs(
+    scene: xr.Dataset,
+    clustered: "ClusteredSpectra",
+    *,
+    label_name: str,
+) -> xr.Dataset:
+    label_name = _validate_cluster_label_name(label_name)
+    updated = scene.copy()
+    cluster_coord = np.arange(clustered.n_clusters, dtype=np.int64)
+
+    labels = np.full(updated["valid_inversion_mask"].shape, -1, dtype=np.int64).reshape(-1)
+    if clustered.n_valid > 0:
+        labels[clustered.valid_flat_indices] = clustered.inverse_indices
+    labels = labels.reshape(updated["valid_inversion_mask"].shape)
+
+    updated[label_name] = xr.DataArray(
+        labels,
+        dims=("y", "x"),
+        coords={dim: updated.coords[dim].values for dim in ("y", "x")},
+        name=label_name,
+        attrs=_cluster_attrs(clustered),
+    )
+    updated["cluster_count"] = xr.DataArray(
+        clustered.counts.astype(np.int64, copy=False),
+        dims=("cluster",),
+        coords={"cluster": cluster_coord},
+        name="cluster_count",
+        attrs=_cluster_attrs(clustered),
+    )
+
+    if clustered.representative_reflectance is not None:
+        updated["cluster_representative_reflectance"] = xr.DataArray(
+            clustered.representative_reflectance,
+            dims=("cluster", "band"),
+            coords={
+                "cluster": cluster_coord,
+                "band": updated.coords["band"].values,
+            },
+            name="cluster_representative_reflectance",
+            attrs=_cluster_attrs(clustered),
+        )
+    if clustered.representative_background is not None:
+        updated["cluster_representative_background"] = xr.DataArray(
+            clustered.representative_background,
+            dims=("cluster", "band"),
+            coords={
+                "cluster": cluster_coord,
+                "band": updated.coords["band"].values,
+            },
+            name="cluster_representative_background",
+            attrs=_cluster_attrs(clustered),
+        )
+    if clustered.representative_solar_zenith is not None:
+        updated["cluster_representative_solar_zenith"] = xr.DataArray(
+            clustered.representative_solar_zenith,
+            dims=("cluster",),
+            coords={"cluster": cluster_coord},
+            name="cluster_representative_solar_zenith",
+            attrs=_cluster_attrs(clustered),
+        )
+
+    return updated
+
+
+def _cluster_attrs(clustered: "ClusteredSpectra") -> dict[str, str]:
+    return {
+        "features": ",".join(clustered.features),
+        "representative_method": clustered.representative_method,
+    }
+
+
+def _validate_cluster_label_name(label_name: str) -> str:
+    cleaned = label_name.strip()
+    if not cleaned:
+        raise ValueError("label_name must be non-empty")
+    return cleaned
 
 
 def _require_matching_coords(
