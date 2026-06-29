@@ -173,6 +173,7 @@ class SpiresData:
         print(self.solar_zenith.shape)
         import matplotlib.pyplot as plt
         plt.imshow(self.target_spectra[:,:,0])
+        #plt.imshow(self.sensor_zenith[:,:])
         plt.show()
 
 
@@ -226,7 +227,7 @@ class SpiresData:
 
         # Handle if the user just gives an r0 that is a sensor file
         # which is valid, especially if there is limited data
-        if r0_path.suffix.lower() in [".h5", ".nc"]:
+        if r0_path.suffix.lower() in [".h5", ".nc", ".hdf"]:
             r0 , _ = self.load_sensor_data(r0_path)
         else:
             # Otherwise, we will assume the r0 is a something we can open with rasterio
@@ -241,21 +242,49 @@ class SpiresData:
         return r0.astype(np.float32)
 
 
+    def _load_modis(self, img_file: Path) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
 
-    def _load_modis(self) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
+        ds = nc.Dataset(img_file, "r")
+        
+        bands = self.config.sensor.selected_bands or list(constants.MODIS_ANALYSIS_BANDS)
+    
+        def process_modis_band(band_id: str):
+            field_name = f"sur_refl_b{int(band_id):02d}_1"
+            return ds.variables[field_name][:].astype(np.float32)
 
+        data = np.stack([process_modis_band(b) for b in bands], axis=0)
 
-        # ? bands = self.config.sensor.selected_bands or (
-        #    list(constants.VIIRS_500M_REFLECTANCE_BANDS) + 
-        #    list(constants.VIIRS_1KM_REFLECTANCE_BANDS)
-        #)
-        #if self.config.sensor.apply_topo_correction:
-        #    self._perform_topo_correction()
+        geom_fields = [
+            constants.MODIS_1KM_GEOMETRY_FIELDS["sensor_zenith"],
+            constants.MODIS_1KM_GEOMETRY_FIELDS["sensor_azimuth"],
+            constants.MODIS_1KM_GEOMETRY_FIELDS["solar_zenith"],
+            constants.MODIS_1KM_GEOMETRY_FIELDS["solar_azimuth"],
+        ]
+        
+        geom = np.stack(
+            [
+                zoom(ds.variables[f][:].astype(np.float32), 2, order=1)
+                for f in geom_fields
+            ],
+            axis=0,
+        )
 
-        pass
+        if self.config.option.resampling_method is not None:
 
+            # Get west and north points for modis data
+            struct_meta = getattr(ds, "StructMetadata.0", "")
+            grid_match = re.search(r'GridName="MODIS_Grid_500m_2D"(.*?)END_GROUP=GRID_\d+', struct_meta, re.DOTALL)
+            grid_block = grid_match.group(1)
+            ul_point = re.search(r"UpperLeftPointMtrs=\(([^,]+),([^)]+)\)", grid_block)
+            west, north = float(ul_point.group(1)), float(ul_point.group(2))
 
+            transform = Affine(self.sensor_resolution, 0, west, 0, -self.sensor_resolution, north)
+            data = self._warp_data(data, transform, constants.VIIRS_MODIS_CRS)
+            geom = self._warp_data(geom, transform, constants.VIIRS_MODIS_CRS)
 
+        ds.close()
+
+        return data, geom
 
 
 
@@ -266,10 +295,7 @@ class SpiresData:
 
         ds = nc.Dataset(img_file, "r")
 
-        bands = self.config.sensor.selected_bands or (
-            list(constants.VIIRS_500M_REFLECTANCE_BANDS) + 
-            list(constants.VIIRS_1KM_REFLECTANCE_BANDS)
-        )
+        bands = self.config.sensor.selected_bands or list(constants.VIIRS_ANALYSIS_BANDS)
 
         def process_band(band_id: str):
             is_500m = band_id in constants.VIIRS_500M_REFLECTANCE_BANDS
@@ -322,6 +348,8 @@ class SpiresData:
         #    data = self._perform_topo_correction(image=data, 
         #                                         sza=geom[..., 2], 
         #                                         saa=geom[..., 3])
+
+        ds.close()
 
         return data, geom
 
@@ -429,6 +457,8 @@ class SpiresData:
         #                                         sza=geom[..., 2], 
         #                                         saa=geom[..., 3])
 
+        ds.close()
+        
         return data, geom
 
 

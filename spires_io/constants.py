@@ -55,6 +55,21 @@ MODIS_500M_SUPPORT_FIELDS = {
 }
 
 
+# VIIRS wavelengths
+_MODIS_DATA = {"1": 645.0,
+                   "2": 858.5,
+                   "3": 469.0,
+                   "4": 555.0,
+                   "5": 1240.0,
+                   "6": 1640.0,
+                   "7": 2130.0,
+            }
+MODIS_CENTER_WL = {
+    band: _MODIS_DATA[band] 
+    for band in MODIS_ANALYSIS_BANDS
+}
+
+
 ####################################################################
 ####################################################################
 ####################################################################
@@ -435,7 +450,7 @@ EMIT_CENTER_WL = EMIT_DATA[:, 1]
 
 # Shared constants
 
-VALID_EXTENSIONS = [".tif", ".nc", ".h5", ".mat"]
+VALID_EXTENSIONS = [".tif", ".nc", ".h5", ".mat", ".hdf"]
 
 VIIRS_MODIS_CRS = (
     'PROJCS["unnamed",GEOGCS["Unknown datum based upon the custom spheroid",'
@@ -454,6 +469,16 @@ SENSORS_META = {
         },
         "bands": np.array(VIIRS_ANALYSIS_BANDS),
         "wavelength": np.array([VIIRS_CENTER_WL[b] for b in VIIRS_ANALYSIS_BANDS])
+    },
+
+    "modis": {
+        "apply_topo_correction": {
+            4: True,
+            5: True,
+            6: True,
+        },
+        "bands": np.array(MODIS_ANALYSIS_BANDS),
+        "wavelength": np.array([MODIS_CENTER_WL[b] for b in MODIS_ANALYSIS_BANDS])
     },
 
     "emit": {
