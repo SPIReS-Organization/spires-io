@@ -444,6 +444,8 @@ EMIT_DATA = np.array([
 EMIT_ANALYSIS_BANDS = EMIT_DATA[:, 0]
 EMIT_CENTER_WL = EMIT_DATA[:, 1]
 
+EMIT_CRS = "EPSG:4326"
+
 ####################################################################
 ####################################################################
 ####################################################################
@@ -459,6 +461,8 @@ VIIRS_MODIS_CRS = (
     'PARAMETER["longitude_of_center",0],PARAMETER["false_easting",0],'
     'PARAMETER["false_northing",0],UNIT["Meter",1]]'
 )
+
+VIIRS_MODIS_WATER_MASK_INTS = [0, 2, 3, 4, 5, 6, 7]
 
 SENSORS_META = {
 
