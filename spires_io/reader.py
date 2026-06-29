@@ -45,7 +45,7 @@ class SpiresData:
         self.solar_azimuth = None
         self.target_spectra = None
         self.background_spectra = None
-
+        self.cloud_mask = None
         self.lut_dir = None
         self.lut_dif = None
 
@@ -165,19 +165,40 @@ class SpiresData:
         # Next, load r0 - background spectra
         self.background_spectra = self._load_r0()
 
-        # Then, we load any sort of masks that were passed
-        # TODO to look at, was water mask in VIIRS and MODIS layers? how to handle if so, with different sensors
-        #
+        # Cloud mask(s) 
+        # TODO the cloud masking loader has not been tested yet
+        if not self.config.option.ignore_cloudmask_for_clustering and self.config.files.cloud_mask:
+            cloudmask_path = Path(self.config.files.cloud_mask)
 
-        print(self.target_spectra.shape)
-        print(self.sensor_zenith.shape)
-        print(self.sensor_azimuth.shape)
-        print(self.solar_zenith.shape)
-        import matplotlib.pyplot as plt
+            all_cloudmask_files = (
+                [
+                    f
+                    for f in cloudmask_path.iterdir()
+                    if f.is_file() and not f.name.startswith(".")
+                ]
+                if cloudmask_path.is_dir()
+                else [cloudmask_path]
+            )
+            cloudmask_files = self._filter_by_date(all_cloudmask_files)
 
-        plt.imshow(self.target_spectra[:, :, 0])
-        # plt.imshow(self.sensor_zenith[:,:])
-        plt.show()
+            def _stage_cloud_mask(c_file) -> npt.NDArray[np.float32]:
+                with rio.open(c_file) as src:
+                    if self.config.option.resampling_method is not None:
+                        mask = self._warp_data(src.read(1), src.transform, src.crs)
+                    else:
+                        mask = src.read(1)
+                    return mask[..., 0]
+
+            if self.config.option.cpu_cores > 1 and len(cloudmask_files) > 1:
+                warped_masks = Parallel(n_jobs=self.implement.cpu_cores)(
+                    delayed(_stage_cloud_mask)(f) for f in cloudmask_files
+                )
+            else:
+                warped_masks = [_stage_cloud_mask(f) for f in cloudmask_files]
+
+            for idx, mask_warped in enumerate(warped_masks):
+                self.spectrum_target[mask_warped == 1, :, idx] = np.nan
+
 
         self._validate_dimensions()
 
@@ -206,6 +227,7 @@ class SpiresData:
             "solar_zenith": self.solar_zenith,
             "solar_azimuth": self.solar_azimuth,
             "background_spectra": self.background_spectra,
+            "cloud_mask": self.cloud_mask,
         }
 
         for name, data in attrs_to_check.items():
@@ -713,9 +735,3 @@ class SpiresData:
                 except ValueError:
                     continue
         return None
-
-
-# TESTING
-data = SpiresData("/Users/bawilder/Code/SPIReS/spires-io/example_config.json")
-
-data.load()

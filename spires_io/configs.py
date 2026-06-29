@@ -14,7 +14,6 @@ class FilesConfig:
     snowfree_image: str
     lut: str
     cloud_mask: Optional[str] = None
-    water_mask: Optional[str] = None
     dem: Optional[str] = None
     slope: Optional[str] = None
     aspect: Optional[str] = None
