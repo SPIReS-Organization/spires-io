@@ -12,10 +12,8 @@ license = { text = "MIT" }
 authors = [{ name = "Niklas Griessbaum" }]
 keywords = ["snow", "remote sensing", "xarray", "MODIS", "Sentinel-2", "Landsat"]
 dependencies = [
-    "spires-contract",
-    "rioxarray",
+    "numpy",
     "pyproj",
-    "gdal",
 ]
 
 [project.optional-dependencies]
@@ -26,8 +24,8 @@ Homepage = "https://github.com/SPIReS-Organization/spires-io"
 Repository = "https://github.com/SPIReS-Organization/spires-io"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["./"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["./"]

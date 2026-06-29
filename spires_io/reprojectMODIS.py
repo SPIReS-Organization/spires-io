@@ -1,6 +1,6 @@
-'''
+"""
 test out a reprojection of MODIS HDF
-'''
+"""
 
 import os
 import re
@@ -13,11 +13,11 @@ from affine import Affine
 from rioxarray.rioxarray import affine_to_coords
 
 
-#function to plot RGB
+# function to plot RGB
 def RGBplotRaster(X):
     fig, axs = plt.subplots()
     plt.imshow(X[:, :, [0, 3, 2]])
-    axs.set_title(desc + '\n' + name)
+    axs.set_title(desc + "\n" + name)
     fig.canvas.draw()
 
 
@@ -42,8 +42,9 @@ def reproject():
     crs_str = rds[1].spatial_ref.crs_wkt
     # transform lat lon returned to sinusoid
     transformer = Transformer.from_crs(targetProj, crs_str, always_xy=True)
-    west, north = transformer.transform(rds[ind].WESTBOUNDINGCOORDINATE,
-                                        rds[ind].NORTHBOUNDINGCOORDINATE)
+    west, north = transformer.transform(
+        rds[ind].WESTBOUNDINGCOORDINATE, rds[ind].NORTHBOUNDINGCOORDINATE
+    )
     # create a transformation
     pixel_size = rds[ind].CHARACTERISTICBINSIZE500M
     transform = Affine(pixel_size, 0, west, 0, -pixel_size, north)
@@ -57,13 +58,13 @@ def reproject():
     for lyr in lyrs:
         if pattern.search(lyr):
             data = rds[ind][lyr]
-            data = data.squeeze();
+            data = data.squeeze()
             # add null values and scale
             scalefactor = data.attrs["scale_factor"]
             fillvalue = data.attrs["_FillValue"]
-            data.values = data.values.astype('float64')
+            data.values = data.values.astype("float64")
             # set fill values to NaN
-            t = (data.values == fillvalue)
+            t = data.values == fillvalue
             data.values[t] = np.NaN
             # set values < 0 to 0
             t = data.values < 0
@@ -76,16 +77,14 @@ def reproject():
             data = data.rio.reproject(targetProj, nodata=np.nan)
             # allocate new arrays if 1st pass
             if i == 0:
-                X0 = np.zeros([data0.rio.height, data0.rio.width, nBands], 'float64')
-                X = np.zeros([data.rio.height, data.rio.width, nBands], 'float64')
+                X0 = np.zeros([data0.rio.height, data0.rio.width, nBands], "float64")
+                X = np.zeros([data.rio.height, data.rio.width, nBands], "float64")
             # fill arrays
             X0[:, :, i] = data0.values
             X[:, :, i] = data.values
             i = i + 1
     # plot old and new
-    desc = 'unmodified'
+    desc = "unmodified"
     RGBplotRaster(X0)
     desc = targetProj
     RGBplotRaster(X)
-
-

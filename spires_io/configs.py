@@ -30,7 +30,7 @@ class FilesConfig:
                 )
 
             path = Path(path)
-            
+
             if path.is_file() and path.suffix.lower() not in constants.VALID_EXTENSIONS:
                 raise ValueError(f"{path} has invalid file type: {path.suffix}")
 
@@ -38,7 +38,7 @@ class FilesConfig:
 @dataclass
 class SensorConfig:
     name: str
-    product_version: Optional[str] = None
+    product_version: Optional[int] = None
     selected_bands: Optional[List[str]] = None
 
     def __post_init__(self) -> None:
@@ -46,48 +46,32 @@ class SensorConfig:
             raise ValueError(
                 f"Sensor name '{self.name}' not in supported: {constants.SUPPORTED_SENSORS}"
             )
-
+        
         self.resolution = constants.DEFAULT_RESOLUTION.get(self.name.lower())
-        pkg = importlib.resources.files("spires_io.data.wavelengths")
-        self.wavelength_file = pkg.joinpath(f"{self.name.lower()}.txt")
 
-        if not self.wavelength_file.is_file():
-            raise FileNotFoundError(f"Could not find wavelength file for {self.name}")
+        meta = constants.SENSORS_META.get(self.name)
+        self.band_names_full = meta["bands"]
+        self.wavelength_full = meta["wavelength"]
 
-        wl_data = np.genfromtxt(
-            self.wavelength_file,
-            dtype=None,
-            names=["band", "wl", "fwhm"],
-            encoding="utf-8",
-            usecols=(0, 1, 2),
-        )
-        self.band_names, self.wavelength, self.fwhm = (
-            wl_data["band"],
-            wl_data["wl"],
-            wl_data["fwhm"],
-        )
+        # Allows user to specify which bands to use
+        if self.selected_bands is not None:
+            # This is hacky, but to allow VIIRS+MODIS etc to have band names that are string and
+            # hyperspectral to be band indicies which may be easier to use. TODO
+            if isinstance(self.band_names_full[0], (str, np.str_)):
+                mask = np.isin(self.band_names_full.astype(str), 
+                               np.array(self.selected_bands).astype(str))
+            else:
+                mask = np.isin(self.band_names_full.astype(float), 
+                               np.array(self.selected_bands).astype(float))
+            if not np.any(mask):
+                raise ValueError(f"No bands matched selection: {self.selected_bands}")
+            
+            self.band_names = self.band_names_full[mask]
+            self.wavelength = self.wavelength_full[mask]
 
-        if self.selected_bands:
-            mask = np.isin(self.band_names, self.selected_bands)
-            self.band_names, self.wavelength, self.fwhm = (
-                self.band_names[mask],
-                self.wavelength[mask],
-                self.fwhm[mask],
-            )
+        # Search to see if we need to apply the topographic correction for hooking
+        self.apply_topo_correction = meta.get("topo_map", {}).get(self.product_version, False)
 
-        self.apply_topo_correction = False
-        if "modis" in self.name.lower():
-            self.apply_topo_correction = True
-        if "viirs" in self.name.lower():
-            self.apply_topo_correction = True
-        if "sentinel" in self.name.lower():
-            self.apply_topo_correction = False
-        if (
-            "emit" in self.name.lower()
-            and self.product_version
-            and "1" in self.product_version
-        ):
-            self.apply_topo_correction = True
 
 
 @dataclass
@@ -143,11 +127,11 @@ class OptionsConfig:
 
 @dataclass
 class LookUpTableConfig:
-    reflectance: str = "reflectance"
-    grain_radius: str = "grain_radius"
-    pollutant: str = "dust"
-    liquid_water_fraction: Optional[float] = None
-    solar_zenith: str = "solar_zenith"
+    reflectance: Optional[str] = "reflectance"
+    grain_radius: Optional[str] = "grain_radius"
+    pollutant: Optional[str] = "dust"
+    liquid_water_fraction: Optional[str] = None
+    solar_zenith: Optional[str] = "solar_zenith"
 
 
 @dataclass
@@ -171,6 +155,8 @@ class InversionConfig:
 
 class SpiresConfig:
     def __init__(self, config_file: str) -> None:
+        
+        self.srtmnet = None
 
         with open(config_file, "r") as f:
             data = json.load(f)
@@ -193,6 +179,7 @@ class SpiresConfig:
                 path = Path(getattr(self.files, f) or "")
                 if not path.is_file():
                     raise FileNotFoundError(f"Topography data {f} missing at {path}")
-
-
+            
+            pkg = importlib.resources.files("spires_io.data.topo_correction_lut")
+            self.srtmnet = pkg.joinpath("srtmnet_coarse.nc")
 

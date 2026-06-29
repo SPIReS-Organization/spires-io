@@ -172,12 +172,12 @@ class SpiresData:
         print(self.sensor_azimuth.shape)
         print(self.solar_zenith.shape)
         import matplotlib.pyplot as plt
-        plt.imshow(self.solar_zenith)
+        plt.imshow(self.target_spectra[:,:,0])
         plt.show()
 
 
         self._validate_dimensions()
-
+        
 
 
     def cluster(self, method) -> None:   
@@ -249,7 +249,8 @@ class SpiresData:
         #    list(constants.VIIRS_500M_REFLECTANCE_BANDS) + 
         #    list(constants.VIIRS_1KM_REFLECTANCE_BANDS)
         #)
-
+        #if self.config.sensor.apply_topo_correction:
+        #    self._perform_topo_correction()
 
         pass
 
@@ -317,7 +318,11 @@ class SpiresData:
             # VZA, VAA, SZA, SAA
             geom = self._warp_data(geom, transform, constants.VIIRS_MODIS_CRS)
 
-        
+        #if self.config.sensor.apply_topo_correction:
+        #    data = self._perform_topo_correction(image=data, 
+        #                                         sza=geom[..., 2], 
+        #                                         saa=geom[..., 3])
+
         return data, geom
 
 
@@ -334,6 +339,9 @@ class SpiresData:
         #    list(constants.VIIRS_1KM_REFLECTANCE_BANDS)
         #)
 
+        #if self.config.sensor.apply_topo_correction:
+        #    self._perform_topo_correction()
+
         pass
     
 
@@ -343,10 +351,7 @@ class SpiresData:
 
     def _load_emit(self, img_file: Path) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
 
-        # ? bands = self.config.sensor.selected_bands or (
-        #    list(constants.VIIRS_500M_REFLECTANCE_BANDS) + 
-        #    list(constants.VIIRS_1KM_REFLECTANCE_BANDS)
-        #)
+        # TODO for right now, selected bands will be ignored... 
 
         with nc.Dataset(img_file) as ds:
             glt_x = ds.groups['location']['glt_x'][:].flatten().astype(int) - 1
@@ -402,10 +407,14 @@ class SpiresData:
         geom = np.stack([vza, vaa, sza, saa])
         
         # Apply cleaning of some noisy wavelengths around deep water features
-        mask = (self.config.sensor.wavelength < 495) | \
-               ((self.config.sensor.wavelength >= 1325) & (self.config.sensor.wavelength < 1468)) | \
-               ((self.config.sensor.wavelength >= 1765) & (self.config.sensor.wavelength <= 1967))
+        mask = (self.config.sensor.wavelength_full < 495) | \
+               ((self.config.sensor.wavelength_full >= 1325) & (self.config.sensor.wavelength_full < 1468)) | \
+               ((self.config.sensor.wavelength_full >= 1765) & (self.config.sensor.wavelength_full <= 1967))
         data[mask, :, :] = np.nan
+
+        # Apply user band mask if given
+        #if self.config.sensor.selected_bands is not None:
+        #    data = data[np.isin(np.arange(data.shape[0]), self.config.sensor.selected_bands), :, :]
 
 
         if self.config.option.resampling_method is not None:
@@ -415,6 +424,10 @@ class SpiresData:
             
             geom = self._warp_data(geom, src_transform, 'EPSG:4326')
 
+        #if self.config.sensor.apply_topo_correction:
+        #    data = self._perform_topo_correction(image=data, 
+        #                                         sza=geom[..., 2], 
+        #                                         saa=geom[..., 3])
 
         return data, geom
 
@@ -466,11 +479,17 @@ class SpiresData:
 
 
 
-    def _perform_topo_correction(self, image) -> npt.NDArray[np.float32]:
+    def _perform_topo_correction(self, image, sza, saa) -> npt.NDArray[np.float32]:
+
+        sza = sza.squeeze()
+        saa = saa.squeeze()
+        alt = self.dem.squeeze() / 1e3
+        slope = self.slope.squeeze()
+        aspect = self.aspect.squeeze()
 
         # Cache in case we are running for many scenes
         if self.lut_dir is None or self.lut_dif is None:
-            ds = xr.open_dataset(self.files.atm_lut)
+            ds = xr.open_dataset(self.config.srtmnet)
             
             dims = ("AOT550", "H2OSTR", "surface_elevation_km", "solar_zenith", "wl")
             points = (ds.AOT550.values, ds.H2OSTR.values, ds.surface_elevation_km.values, ds.solar_zenith.values)
@@ -484,34 +503,32 @@ class SpiresData:
             self.lut_wl = ds.wl.values
             ds.close()
 
-        # TODO For now just testing for completion
-        # there is a fixed SZA etc
         rows, cols = image.shape[:2]
-        aod_arr = np.full((rows, cols), self.config.option.atmosphere_aod)
-        wv_arr = np.full((rows, cols), self.config.option.atmosphere_watervapor_gcm2)
-        alt_arr = self.dem / 1e3 
-        sza_arr = np.full((rows, cols), self.sza)
-        img_grid = np.stack([aod_arr, wv_arr, alt_arr, sza_arr], axis=-1)
+        aod = np.full((rows, cols), self.config.option.atmosphere_aod)
+        wv = np.full((rows, cols), self.config.option.atmosphere_watervapor_gcm2)
+         
+        img_grid = np.stack([aod, wv, alt, sza], axis=-1)
         
         Edir = self.lut_dir(img_grid)
         Edif = self.lut_dif(img_grid)
 
         # Interpolate coarse RT sims to sensor wavelengths
-        Edir = interp1d(self.lut_wl, Edir, axis=-1, kind='linear', fill_value="extrapolate")(self.wavelength)
-        Edif = interp1d(self.lut_wl, Edif, axis=-1, kind='linear', fill_value="extrapolate")(self.wavelength)
+        Edir = interp1d(self.lut_wl, Edir, axis=-1, kind='linear', fill_value="extrapolate")(self.config.sensor.wavelength)
+        Edif = interp1d(self.lut_wl, Edif, axis=-1, kind='linear', fill_value="extrapolate")(self.config.sensor.wavelength)
 
         # Assume hooking effect after 1500 nm is negligible (Bair et al., 2025)
         # In other words, this assumes 100% direct light after 1500 nm
-        atm_lut_mask = self.wavelength > 1500.0
+        atm_lut_mask = self.config.sensor.wavelength > 1500.0
         Edir[..., atm_lut_mask] = 1.0
         Edif[..., atm_lut_mask] = 0.0
 
-        mu_0 = np.cos(np.radians(self.sza))
-        mu_s = (np.cos(np.radians(self.sza)) * np.cos(np.radians(self.slope)) + 
-                np.sin(np.radians(self.sza)) * np.sin(np.radians(self.slope)) * np.cos(np.radians(self.saa - self.aspect)))
+        mu_0 = np.cos(np.radians(sza))
+        mu_s = (np.cos(np.radians(sza)) * np.cos(np.radians(slope)) + 
+                np.sin(np.radians(sza)) * np.sin(np.radians(slope)) * np.cos(np.radians(saa - aspect)))
 
         # apply terrain shadowing
-        shadow_mask = self._apply_shadow_mask()
+        #shadow_mask = self._apply_shadow_mask()
+        shadow_mask = 1.0 # TODO
         mu_s = shadow_mask * mu_s
 
         # limit the correction for shaded / low signal slopes
@@ -542,7 +559,7 @@ class SpiresData:
     def _apply_shadow_mask(self) -> npt.NDArray[np.float32]:
         """TODO can store this too in memory for user
         """
-        rows, cols = self.dem.shape
+        rows, cols = self.dem.shape[:2]
         pixel_list = [(i, j) for i in range(rows) for j in range(cols)]
         results = Parallel(n_jobs=self.config.option.cpu_cores)(
             delayed(self._ray_trace_pixel)(i, j) for i, j in pixel_list
@@ -554,7 +571,7 @@ class SpiresData:
     def _ray_trace_pixel(self, i, j):
 
         pix_size = self.sensor_resolution
-        i_lim, j_lim = self.dem.shape
+        i_lim, j_lim = self.dem.shape[:2]
         
         # ray path
         tan_theta_e = np.tan(np.radians(90 - self.sza))
