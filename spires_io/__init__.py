@@ -11,8 +11,11 @@ from spires_io.api import (
     open_surface_reflectance,
     prepare_scene_for_inversion,
 )
+from spires_io.ancillary import load_ancillary_layer, load_ancillary_layers
+from spires_io.background import load_background_reflectance
 from spires_io.configs import SceneManifest, SceneManifestItem, SpiresRunConfig
 from spires_io.loader import SpiresDataLoader
+from spires_io.masks import load_external_mask
 from spires_io.spires_data import SpiresData
 
 __all__ = [
@@ -25,6 +28,10 @@ __all__ = [
     "describe_sensor",
     "list_supported_sensor_platforms",
     "list_supported_sensors",
+    "load_ancillary_layer",
+    "load_ancillary_layers",
+    "load_background_reflectance",
+    "load_external_mask",
     "normalize_platform_name",
     "normalize_sensor_name",
     "open_surface_reflectance",

@@ -41,6 +41,19 @@ def test_spires_config_accepts_background_image_without_warning(tmp_path):
     assert config.files.snowfree_image == "background.tif"
 
 
+def test_spires_config_accepts_tiff_background_image(tmp_path):
+    background = tmp_path / "background.tiff"
+    background.touch()
+    config_path = _write_config(
+        tmp_path,
+        _required_files(background_image=str(background)),
+    )
+
+    config = SpiresConfig(config_path)
+
+    assert config.files.background_image == str(background)
+
+
 def test_spires_config_accepts_deprecated_snowfree_image_with_warning(tmp_path):
     files = _required_files(snowfree_image="snowfree.tif")
     del files["background_image"]

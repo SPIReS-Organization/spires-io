@@ -7,16 +7,22 @@ from typing import Any
 import xarray as xr
 
 from spires_io.api import prepare_scene_for_inversion
+from spires_io.ancillary import load_ancillary_layers
+from spires_io.background import load_background_reflectance
 from spires_io.configs import (
     SceneManifestItem,
     SpiresConfig,
     SpiresRunConfig,
 )
+import spires_io.constants as constants
+from spires_io.masks import load_external_mask
 from spires_io.spires_data import SpiresData
 
 
 ScenePreparer = Callable[..., xr.Dataset]
-BackgroundLoader = Callable[[str], xr.DataArray | None]
+BackgroundLoader = Callable[..., xr.DataArray | None]
+AncillaryLoader = Callable[..., xr.Dataset | None]
+MaskLoader = Callable[..., xr.DataArray]
 
 
 class SpiresDataLoader:
@@ -29,11 +35,15 @@ class SpiresDataLoader:
         single_scene_config: SpiresConfig | None = None,
         scene_preparer: ScenePreparer = prepare_scene_for_inversion,
         background_loader: BackgroundLoader | None = None,
+        ancillary_loader: AncillaryLoader = load_ancillary_layers,
+        mask_loader: MaskLoader = load_external_mask,
     ) -> None:
         self.run_config = run_config
         self.single_scene_config = single_scene_config
         self._scene_preparer = scene_preparer
-        self._background_loader = background_loader or load_background_image
+        self._background_loader = background_loader or load_background_reflectance
+        self._ancillary_loader = ancillary_loader
+        self._mask_loader = mask_loader
 
     @classmethod
     def from_config(
@@ -42,12 +52,16 @@ class SpiresDataLoader:
         *,
         scene_preparer: ScenePreparer = prepare_scene_for_inversion,
         background_loader: BackgroundLoader | None = None,
+        ancillary_loader: AncillaryLoader = load_ancillary_layers,
+        mask_loader: MaskLoader = load_external_mask,
     ) -> "SpiresDataLoader":
         """Create a loader for Brent-style single-scene JSON configs."""
         return cls(
             single_scene_config=SpiresConfig(config_file),
             scene_preparer=scene_preparer,
             background_loader=background_loader,
+            ancillary_loader=ancillary_loader,
+            mask_loader=mask_loader,
         )
 
     def load(self) -> SpiresData:
@@ -61,8 +75,12 @@ class SpiresDataLoader:
             sensor=config.sensor.name,
             **_reader_kwargs_from_single_scene_config(config),
         )
-        background = self._background_loader(config.files.background_image)
-        return SpiresData.from_scene(scene, background=background)
+        background = self._background_loader(config.files.background_image, target_scene=scene)
+        ancillary = self._ancillary_loader(
+            _single_scene_ancillary_sources(config),
+            target_scene=scene,
+        )
+        return SpiresData.from_scene(scene, background=background, ancillary=ancillary)
 
     def load_item(self, item: SceneManifestItem | Mapping[str, Any]) -> SpiresData:
         """Load one scene manifest item using this loader's run-wide policy."""
@@ -76,32 +94,19 @@ class SpiresDataLoader:
             sensor=self.run_config.sensor.name,
             **_reader_kwargs_from_run_config(self.run_config),
         )
-        background = self._background_loader(item.background_image)
-        return SpiresData.from_scene(scene, background=background)
+        background = self._background_loader(item.background_image, target_scene=scene)
+        ancillary = self._ancillary_loader(item.ancillary, target_scene=scene)
+        data = SpiresData.from_scene(scene, background=background, ancillary=ancillary)
+        return _assign_manifest_masks(data, item.masks, scene, self._mask_loader)
 
 
-def load_background_image(path: str) -> xr.DataArray:
-    """Load a background image in the minimal xarray-native form supported in v1."""
-    suffix = Path(path).suffix.lower()
-    if suffix in {".nc", ".cdf", ".netcdf"}:
-        try:
-            return xr.open_dataarray(path)
-        except ValueError:
-            dataset = xr.open_dataset(path)
-            if "reflectance" in dataset:
-                return dataset["reflectance"]
-            data_vars = list(dataset.data_vars)
-            if len(data_vars) == 1:
-                return dataset[data_vars[0]]
-            raise ValueError(
-                "background NetCDF datasets must contain a 'reflectance' variable "
-                "or exactly one data variable"
-            )
-
-    raise NotImplementedError(
-        "background loading for non-xarray files is deferred to the background "
-        "and ancillary loading step"
-    )
+def load_background_image(
+    path: str | Path,
+    *,
+    target_scene: xr.Dataset | None = None,
+) -> xr.DataArray:
+    """Compatibility alias for :func:`load_background_reflectance`."""
+    return load_background_reflectance(path, target_scene=target_scene)
 
 
 def _reader_kwargs_from_single_scene_config(config: SpiresConfig) -> dict[str, Any]:
@@ -123,3 +128,36 @@ def _reader_kwargs_from_run_config(config: SpiresRunConfig) -> dict[str, Any]:
     if config.sensor.selected_bands is not None:
         kwargs.setdefault("bands", list(config.sensor.selected_bands))
     return kwargs
+
+
+def _single_scene_ancillary_sources(config: SpiresConfig) -> dict[str, str]:
+    return {
+        name: path
+        for name in constants.STATIC_DATA
+        if (path := getattr(config.files, name)) is not None
+    }
+
+
+def _assign_manifest_masks(
+    data: SpiresData,
+    masks: Mapping[str, Any],
+    scene: xr.Dataset,
+    mask_loader: MaskLoader,
+) -> SpiresData:
+    if not masks:
+        return data
+
+    loaded_masks = {}
+    for name, spec in masks.items():
+        if isinstance(spec, Mapping):
+            if "path" not in spec:
+                raise ValueError(f"manifest mask {name!r} must include a 'path'")
+            loaded_masks[name] = mask_loader(
+                spec["path"],
+                target_scene=scene,
+                variable=spec.get("variable") or spec.get("var"),
+            )
+        else:
+            loaded_masks[name] = mask_loader(spec, target_scene=scene)
+
+    return data.assign_masks(loaded_masks)

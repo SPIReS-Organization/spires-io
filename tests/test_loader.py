@@ -45,6 +45,18 @@ def _background(scene):
     )
 
 
+def _ancillary(scene):
+    return xr.Dataset(
+        {
+            "canopy_fraction": xr.DataArray(
+                np.full(scene["valid_inversion_mask"].shape, 0.5, dtype=np.float32),
+                dims=("y", "x"),
+                coords={dim: scene.coords[dim].values for dim in ("y", "x")},
+            )
+        }
+    )
+
+
 def _write_single_scene_config(tmp_path):
     config_path = tmp_path / "config.json"
     config_path.write_text(
@@ -76,8 +88,8 @@ def test_loader_from_config_loads_single_scene_with_reader_policy(tmp_path):
         calls.append((source, sensor, kwargs))
         return scene
 
-    def load_background(path):
-        calls.append(("background", path))
+    def load_background(path, *, target_scene):
+        calls.append(("background", path, target_scene is scene))
         return background
 
     loader = SpiresDataLoader.from_config(
@@ -102,8 +114,45 @@ def test_loader_from_config_loads_single_scene_with_reader_policy(tmp_path):
                 "cloud_mask_source": "cloud.nc",
             },
         ),
-        ("background", "background.nc"),
+        ("background", "background.nc", True),
     ]
+
+
+def test_loader_from_config_assigns_single_scene_ancillary(tmp_path):
+    scene = _scene()
+    background = _background(scene)
+    ancillary = _ancillary(scene)
+    calls = []
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "files": {
+                    "image_data": "scene.hdf",
+                    "background_image": "background.nc",
+                    "lut": "lut.mat",
+                    "canopy_fraction": "canopy.tif",
+                },
+                "sensor": {"name": "modis"},
+            }
+        )
+    )
+
+    def load_ancillary(sources, *, target_scene):
+        calls.append((sources, target_scene is scene))
+        return ancillary
+
+    loader = SpiresDataLoader.from_config(
+        config_path,
+        scene_preparer=lambda source, *, sensor, **kwargs: scene,
+        background_loader=lambda path, *, target_scene: background,
+        ancillary_loader=load_ancillary,
+    )
+
+    data = loader.load()
+
+    assert calls == [({"canopy_fraction": "canopy.tif"}, True)]
+    assert data.ancillary.identical(ancillary)
 
 
 def test_spires_data_from_config_delegates_to_loader(monkeypatch):
@@ -148,8 +197,8 @@ def test_loader_load_item_uses_run_config_and_manifest_item():
         calls.append((source, sensor, kwargs))
         return scene
 
-    def load_background(path):
-        calls.append(("background", path))
+    def load_background(path, *, target_scene):
+        calls.append(("background", path, target_scene is scene))
         return background
 
     run_config = SpiresRunConfig.from_mapping(
@@ -185,7 +234,7 @@ def test_loader_load_item_uses_run_config_and_manifest_item():
                 "bands": ["I1", "M4"],
             },
         ),
-        ("background", "background.nc"),
+        ("background", "background.nc", True),
     ]
 
 
@@ -201,7 +250,7 @@ def test_loader_load_item_accepts_mapping_item():
     loader = SpiresDataLoader(
         SpiresRunConfig.from_mapping({"sensor": "modis"}),
         scene_preparer=prepare,
-        background_loader=lambda path: background,
+        background_loader=lambda path, *, target_scene: background,
     )
 
     data = loader.load_item(
@@ -229,9 +278,78 @@ def test_load_background_image_reads_xarray_dataarray(tmp_path):
 
     loaded = load_background_image(str(path))
 
-    xr.testing.assert_equal(loaded, background)
+    expected = background.astype("float64")
+    expected.name = "background_reflectance"
+    xr.testing.assert_equal(loaded, expected)
 
 
-def test_load_background_image_defers_non_xarray_files():
-    with pytest.raises(NotImplementedError, match="deferred"):
-        load_background_image("background.tif")
+def test_load_background_image_rejects_unknown_file_types():
+    with pytest.raises(ValueError, match="background_image"):
+        load_background_image("background.txt")
+
+
+def test_loader_load_item_assigns_manifest_masks():
+    scene = _scene()
+    background = _background(scene)
+    external_mask = xr.DataArray(
+        [[False, True], [False, False]],
+        dims=("y", "x"),
+        coords={"y": scene.coords["y"].values, "x": scene.coords["x"].values},
+        name="mask_manual",
+    )
+    calls = []
+
+    def prepare(source, *, sensor, **kwargs):
+        return scene
+
+    def load_mask(path, *, target_scene, variable=None):
+        calls.append((path, target_scene is scene, variable))
+        return external_mask
+
+    loader = SpiresDataLoader(
+        SpiresRunConfig.from_mapping({"sensor": "modis"}),
+        scene_preparer=prepare,
+        background_loader=lambda path, *, target_scene: background,
+        mask_loader=load_mask,
+    )
+
+    data = loader.load_item(
+        {
+            "image_path": "scene.hdf",
+            "background_image": "background.nc",
+            "masks": {"manual": {"path": "mask.nc", "variable": "mask_manual"}},
+        }
+    )
+
+    assert calls == [("mask.nc", True, "mask_manual")]
+    assert data.scene["mask_manual"].identical(external_mask)
+    assert not bool(data.valid_mask.sel(y=0, x=11))
+
+
+def test_loader_load_item_assigns_manifest_ancillary():
+    scene = _scene()
+    background = _background(scene)
+    ancillary = _ancillary(scene)
+    calls = []
+
+    def load_ancillary(sources, *, target_scene):
+        calls.append((sources, target_scene is scene))
+        return ancillary
+
+    loader = SpiresDataLoader(
+        SpiresRunConfig.from_mapping({"sensor": "modis"}),
+        scene_preparer=lambda source, *, sensor, **kwargs: scene,
+        background_loader=lambda path, *, target_scene: background,
+        ancillary_loader=load_ancillary,
+    )
+
+    data = loader.load_item(
+        {
+            "image_path": "scene.hdf",
+            "background_image": "background.nc",
+            "ancillary": {"dem": "dem.tif"},
+        }
+    )
+
+    assert calls == [({"dem": "dem.tif"}, True)]
+    assert data.ancillary.identical(ancillary)

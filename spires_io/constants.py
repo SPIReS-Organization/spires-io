@@ -452,7 +452,17 @@ EMIT_CRS = "EPSG:4326"
 
 # Shared constants
 
-VALID_EXTENSIONS = [".tif", ".nc", ".h5", ".mat", ".hdf"]
+VALID_EXTENSIONS = [
+    ".tif",
+    ".tiff",
+    ".nc",
+    ".cdf",
+    ".netcdf",
+    ".zarr",
+    ".h5",
+    ".mat",
+    ".hdf",
+]
 
 VIIRS_MODIS_CRS = (
     'PROJCS["unnamed",GEOGCS["Unknown datum based upon the custom spheroid",'
