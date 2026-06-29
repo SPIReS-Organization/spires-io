@@ -13,7 +13,13 @@ authors = [{ name = "Niklas Griessbaum" }]
 keywords = ["snow", "remote sensing", "xarray", "MODIS", "Sentinel-2", "Landsat"]
 dependencies = [
     "numpy",
+    "xarray",
+    "rasterio",
+    "joblib",
+    "netCDF4",
     "pyproj",
+    "scipy",
+    "pysolar",
 ]
 
 [project.optional-dependencies]

@@ -1,12 +1,10 @@
-import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import List, Optional
 
 import numpy as np
 import numpy.typing as npt
-import pandas as pd
 import xarray as xr
 import rasterio as rio
 from joblib import Parallel, delayed
@@ -19,7 +17,6 @@ from scipy.ndimage import zoom, map_coordinates
 from scipy.interpolate import RegularGridInterpolator
 from scipy.interpolate import interp1d
 from pysolar.solar import get_altitude, get_azimuth
-
 
 import spires_io.constants as constants
 from spires_io.configs import SpiresConfig
@@ -57,8 +54,6 @@ class SpiresData:
         }
         self.load_sensor_data = sensor_loaders.get(self.sensor_name)
 
-
-
     def load(self) -> None:
 
         # Load all static data first
@@ -89,10 +84,10 @@ class SpiresData:
                             data = data[..., np.newaxis]
 
                     if f == "canopy_fraction":
-                        if np.nanmax(data) > 1.0+constants.EPS:
+                        if np.nanmax(data) > 1.0 + constants.EPS:
                             data = data / 100.0
                         data[np.isnan(data)] = 0.0
-                        data[data > 1.0+constants.EPS] = np.nan
+                        data[data > 1.0 + constants.EPS] = np.nan
                         self.canopy_fraction = data
 
                     if f == "slope":
@@ -165,9 +160,12 @@ class SpiresData:
         # Next, load r0 - background spectra
         self.background_spectra = self._load_r0()
 
-        # Cloud mask(s) 
+        # Cloud mask(s)
         # TODO the cloud masking loader has not been tested yet
-        if not self.config.option.ignore_cloudmask_for_clustering and self.config.files.cloud_mask:
+        if (
+            not self.config.option.ignore_cloudmask_for_clustering
+            and self.config.files.cloud_mask
+        ):
             cloudmask_path = Path(self.config.files.cloud_mask)
 
             all_cloudmask_files = (
@@ -199,12 +197,11 @@ class SpiresData:
             for idx, mask_warped in enumerate(warped_masks):
                 self.spectrum_target[mask_warped == 1, :, idx] = np.nan
 
-
         self._validate_dimensions()
 
     def cluster(self, method) -> None:
         pass
-    
+
     def write(self, spires_inversion_results, output_dir=None) -> None:
 
         # Determine if output dir is a path or folder
@@ -213,17 +210,12 @@ class SpiresData:
         # we can use the output dir and save the file and append _spires.tif to the end
         # replacing the extension
 
-        # the shape of spires_inversion_results is res.x .. for 2d array.. but what about time? 
+        # the shape of spires_inversion_results is res.x .. for 2d array.. but what about time?
 
-        # WRITE should definitely live here 
+        # WRITE should definitely live here
         # in fact, post-process likely should not be its own repo since we have all needed information here and it can be accessbile via write() in SpiresData()
 
-
         pass
-
-
-
-
 
     def _validate_dimensions(self) -> None:
 
@@ -471,7 +463,7 @@ class SpiresData:
             lon, lat = src_transform * (c, r)
             alt = get_altitude(lat, lon, acq_time)
             az = get_azimuth(lat, lon, acq_time)
-            coner_data.append((90 - alt, az))
+            coner_data.append((90.0 - alt, az))
 
         y = np.linspace(0, 1, rows)
         x = np.linspace(0, 1, cols)
@@ -541,7 +533,7 @@ class SpiresData:
 
         theta_v_prime = np.arctan(b_R * np.tan(np.radians(self.sensor_zenith)))
         theta_s_prime = np.radians(
-            90 - np.degrees(np.arctan((b_R * np.tan(np.radians(90 - slope)))))
+            90.0 - np.degrees(np.arctan((b_R * np.tan(np.radians(90.0 - slope)))))
         )
         phi_v_prime = np.radians(self.sensor_azimuth - aspect)
         self.canopy_fraction = 1 - (
@@ -653,13 +645,13 @@ class SpiresData:
         i_lim, j_lim = self.dem.shape[:2]
 
         # ray path
-        tan_theta_e = np.tan(np.radians(90 - self.sza))
+        tan_theta_e = np.tan(np.radians(90.0 - self.sza))
         tan_sundir = -1 * np.tan(np.radians(self.saa))
 
         # Search length # TODO to be constant
         PIXEL_SEARCH_LENGTH_RAY_TRACE = 300
         y_mover = np.arange(0, PIXEL_SEARCH_LENGTH_RAY_TRACE + 0.1, 1)
-        if self.saa > 270 or self.saa < 90:
+        if self.saa > 270 or self.saa < 90.0:
             y_mover *= -1
         x_mover = np.round(y_mover * tan_sundir).astype(int)
 
