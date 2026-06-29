@@ -26,7 +26,7 @@ from spires_io.configs import SpiresConfig
 
 
 class SpiresData:
-    def __init__(self, config_file:str):
+    def __init__(self, config_file: str):
 
         # Validate input config
         self.config = SpiresConfig(config_file=config_file)
@@ -57,11 +57,10 @@ class SpiresData:
         }
         self.load_sensor_data = sensor_loaders.get(self.sensor_name)
 
-
     # The two main methods that user has access to Load everything specificed in the config
     # and after which, can run cluster if this is somethign they want to do
     def load(self) -> None:
-        
+
         # Load all static data first
         for f in constants.STATIC_DATA:
             path = getattr(self.config.files, f)
@@ -81,7 +80,8 @@ class SpiresData:
                             data = (
                                 np.degrees(
                                     np.arctan2(
-                                        aspect_data_warped[..., 0], aspect_data_warped[..., 1]
+                                        aspect_data_warped[..., 0],
+                                        aspect_data_warped[..., 1],
                                     )
                                 )
                                 % 360
@@ -92,26 +92,25 @@ class SpiresData:
                         if np.nanmax(data) > 1.0:
                             data = data / 100.0
                         data[np.isnan(data)] = 0.0
-                        data[data>100.0] = np.nan
+                        data[data > 100.0] = np.nan
                         self.canopy_fraction = data
 
                     if f == "slope":
-                        data[data<0.0] = np.nan
-                        data[data>90.0] = np.nan
+                        data[data < 0.0] = np.nan
+                        data[data > 90.0] = np.nan
                         self.slope = data
                     if f == "aspect":
-                        data[data<0.0] = np.nan
-                        data[data>360.0] = np.nan
+                        data[data < 0.0] = np.nan
+                        data[data > 360.0] = np.nan
                         self.aspect = data
                     if f == "dem":
-                        data[data>8000.0] = np.nan
-                        data[data<-1000.0] = np.nan
+                        data[data > 8000.0] = np.nan
+                        data[data < -1000.0] = np.nan
                         self.dem = data
                     if f == "skyview":
-                        data[data>1.0] = np.nan
-                        data[data<0.0] = np.nan
+                        data[data > 1.0] = np.nan
+                        data[data < 0.0] = np.nan
                         self.skyview = data
-
 
         # Now the image data
         img_path = Path(self.config.files.image_data)
@@ -126,21 +125,21 @@ class SpiresData:
             ]
         else:
             all_img_files = [img_path]
-        
+
         img_files = self._filter_by_date(all_img_files)
 
         if not img_files:
             raise FileNotFoundError(
                 f"No files matching configuration found at {img_path}"
             )
-        
+
         if self.config.option.cpu_cores > 1 and len(img_files) > 1:
             data = Parallel(n_jobs=self.config.option.cpu_cores)(
                 delayed(self.load_sensor_data)(f) for f in img_files
             )
         else:
             data = [self.load_sensor_data(f) for f in img_files]
-        
+
         self.target_spectra = np.stack([r[0] for r in data], axis=-1)
         self.sensor_zenith = np.stack([r[1][..., 0] for r in data], axis=-1)
         self.sensor_azimuth = np.stack([r[1][..., 1] for r in data], axis=-1)
@@ -148,16 +147,20 @@ class SpiresData:
         self.solar_azimuth = np.stack([r[1][..., 3] for r in data], axis=-1)
 
         # Mask out high zenith angles based on config option
-        mask = (self.solar_zenith > self.config.option.max_solar_zenith) | \
-            (self.sensor_zenith > self.config.option.max_sensor_zenith)
+        mask = (self.solar_zenith > self.config.option.max_solar_zenith) | (
+            self.sensor_zenith > self.config.option.max_sensor_zenith
+        )
 
-        self.target_spectra[..., :, :] = np.where(mask[:, :, np.newaxis, :], 
-                                                  np.nan, 
-                                                  self.target_spectra[..., :, :])
+        self.target_spectra[..., :, :] = np.where(
+            mask[:, :, np.newaxis, :], np.nan, self.target_spectra[..., :, :]
+        )
 
         # Apply canopy correction with respect to image(s) VZA and terrain if given
-        if self.canopy_fraction is not None and self.config.option.canopy_vza_adjustment:
-            self._go_viewable_gap_fraction_adjustment() 
+        if (
+            self.canopy_fraction is not None
+            and self.config.option.canopy_vza_adjustment
+        ):
+            self._go_viewable_gap_fraction_adjustment()
 
         # Next, load r0 - background spectra
         self.background_spectra = self._load_r0()
@@ -166,39 +169,32 @@ class SpiresData:
         # TODO to look at, was water mask in VIIRS and MODIS layers? how to handle if so, with different sensors
         #
 
-
         print(self.target_spectra.shape)
         print(self.sensor_zenith.shape)
         print(self.sensor_azimuth.shape)
         print(self.solar_zenith.shape)
         import matplotlib.pyplot as plt
-        plt.imshow(self.target_spectra[:,:,0])
-        #plt.imshow(self.sensor_zenith[:,:])
+
+        plt.imshow(self.target_spectra[:, :, 0])
+        # plt.imshow(self.sensor_zenith[:,:])
         plt.show()
 
-
         self._validate_dimensions()
-        
 
-
-    def cluster(self, method) -> None:   
+    def cluster(self, method) -> None:
         pass
-
-    
 
     # Everything below here will be incorperated into the load or cluster
     # so users can run spires_data.load() .... spires_data.cluster()
 
-
     #####
     #####
     #####
-
 
     def _validate_dimensions(self) -> None:
 
         ref_shape = self.target_spectra.shape[:2]
-        
+
         attrs_to_check = {
             "dem": self.dem,
             "slope": self.slope,
@@ -209,9 +205,9 @@ class SpiresData:
             "sensor_azimuth": self.sensor_azimuth,
             "solar_zenith": self.solar_zenith,
             "solar_azimuth": self.solar_azimuth,
-            "background_spectra": self.background_spectra
+            "background_spectra": self.background_spectra,
         }
-        
+
         for name, data in attrs_to_check.items():
             if data is not None:
                 if data.shape[:2] != ref_shape:
@@ -219,7 +215,6 @@ class SpiresData:
                         f"Dimension mismatch in '{name}': "
                         f"Expected {ref_shape}, got {data.shape[:2]}"
                     )
-                
 
     def _load_r0(self) -> npt.NDArray[np.float32]:
 
@@ -228,7 +223,7 @@ class SpiresData:
         # Handle if the user just gives an r0 that is a sensor file
         # which is valid, especially if there is limited data
         if r0_path.suffix.lower() in [".h5", ".nc", ".hdf"]:
-            r0 , _ = self.load_sensor_data(r0_path)
+            r0, _ = self.load_sensor_data(r0_path)
         else:
             # Otherwise, we will assume the r0 is a something we can open with rasterio
             with rio.open(self.config.files.snowfree_image) as src:
@@ -237,17 +232,22 @@ class SpiresData:
                     r0 = self._warp_data(r0, src.transform, src.crs)
 
         if r0.shape[-1] != self.target_spectra.shape[2]:
-             raise ValueError(f"Snow free image has different number of bands (len={len(r0.shape[-1])}) compared to input wavelengths (len={len(self.target_spectra.shape[2])}))")
-        
+            raise ValueError(
+                f"Snow free image has different number of bands (len={len(r0.shape[-1])}) compared to input wavelengths (len={len(self.target_spectra.shape[2])}))"
+            )
+
         return r0.astype(np.float32)
 
-
-    def _load_modis(self, img_file: Path) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
+    def _load_modis(
+        self, img_file: Path
+    ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
 
         ds = nc.Dataset(img_file, "r")
-        
-        bands = self.config.sensor.selected_bands or list(constants.MODIS_ANALYSIS_BANDS)
-    
+
+        bands = self.config.sensor.selected_bands or list(
+            constants.MODIS_ANALYSIS_BANDS
+        )
+
         def process_modis_band(band_id: str):
             field_name = f"sur_refl_b{int(band_id):02d}_1"
             return ds.variables[field_name][:].astype(np.float32)
@@ -257,7 +257,7 @@ class SpiresData:
         # Water mask
         water_mask_1km = ds.variables["state_1km_1"][:].astype(np.uint16)
         land_water_bits = (water_mask_1km >> 3) & 0x07
-        water_mask = np.isin(land_water_bits, [0, 2, 3, 4, 5, 6, 7])
+        water_mask = np.isin(land_water_bits, constants.VIIRS_MODIS_WATER_MASK_INTS)
         water_mask_500m = np.repeat(np.repeat(water_mask, 2, axis=0), 2, axis=1)
         data[:, water_mask_500m] = np.nan
 
@@ -267,7 +267,7 @@ class SpiresData:
             constants.MODIS_1KM_GEOMETRY_FIELDS["solar_zenith"],
             constants.MODIS_1KM_GEOMETRY_FIELDS["solar_azimuth"],
         ]
-        
+
         geom = np.stack(
             [
                 zoom(ds.variables[f][:].astype(np.float32), 2, order=1)
@@ -280,12 +280,18 @@ class SpiresData:
 
             # Get west and north points for modis data
             struct_meta = getattr(ds, "StructMetadata.0", "")
-            grid_match = re.search(r'GridName="MODIS_Grid_500m_2D"(.*?)END_GROUP=GRID_\d+', struct_meta, re.DOTALL)
+            grid_match = re.search(
+                r'GridName="MODIS_Grid_500m_2D"(.*?)END_GROUP=GRID_\d+',
+                struct_meta,
+                re.DOTALL,
+            )
             grid_block = grid_match.group(1)
             ul_point = re.search(r"UpperLeftPointMtrs=\(([^,]+),([^)]+)\)", grid_block)
             west, north = float(ul_point.group(1)), float(ul_point.group(2))
 
-            transform = Affine(self.sensor_resolution, 0, west, 0, -self.sensor_resolution, north)
+            transform = Affine(
+                self.sensor_resolution, 0, west, 0, -self.sensor_resolution, north
+            )
             data = self._warp_data(data, transform, constants.VIIRS_MODIS_CRS)
             geom = self._warp_data(geom, transform, constants.VIIRS_MODIS_CRS)
 
@@ -293,29 +299,32 @@ class SpiresData:
 
         return data, geom
 
-
-
-
-
-
-    def _load_viirs(self, img_file) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
+    def _load_viirs(
+        self, img_file
+    ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
 
         ds = nc.Dataset(img_file, "r")
 
-        bands = self.config.sensor.selected_bands or list(constants.VIIRS_ANALYSIS_BANDS)
+        bands = self.config.sensor.selected_bands or list(
+            constants.VIIRS_ANALYSIS_BANDS
+        )
 
         def process_band(band_id: str):
             is_500m = band_id in constants.VIIRS_500M_REFLECTANCE_BANDS
             grid_name = "VIIRS_Grid_500m_2D" if is_500m else "VIIRS_Grid_1km_2D"
             field_name = f"SurfReflect_{band_id}_1"
-            data = ds["HDFEOS"]["GRIDS"][grid_name]["Data Fields"][field_name][:].astype(np.float32)
+            data = ds["HDFEOS"]["GRIDS"][grid_name]["Data Fields"][field_name][
+                :
+            ].astype(np.float32)
             return data if is_500m else zoom(data, 2, order=3)
 
         data = np.stack([process_band(b) for b in bands], axis=0)
 
         # Water mask
-        water_mask_1km = ds["HDFEOS"]["GRIDS"]["VIIRS_Grid_1km_2D"]["Data Fields"]["land_water_mask_1"][:].astype(np.uint8)
-        water_mask = np.isin(water_mask_1km, [0, 2, 3, 4, 5, 6, 7])
+        water_mask_1km = ds["HDFEOS"]["GRIDS"]["VIIRS_Grid_1km_2D"]["Data Fields"][
+            "land_water_mask_1"
+        ][:].astype(np.uint8)
+        water_mask = np.isin(water_mask_1km, constants.VIIRS_MODIS_WATER_MASK_INTS)
         water_mask_500m = np.repeat(np.repeat(water_mask, 2, axis=0), 2, axis=1)
         data[:, water_mask_500m] = np.nan
 
@@ -357,47 +366,37 @@ class SpiresData:
             # VZA, VAA, SZA, SAA
             geom = self._warp_data(geom, transform, constants.VIIRS_MODIS_CRS)
 
-        #if self.config.sensor.apply_topo_correction:
-        #    data = self._perform_topo_correction(image=data, 
-        #                                         sza=geom[..., 2], 
+        # if self.config.sensor.apply_topo_correction:
+        #    data = self._perform_topo_correction(image=data,
+        #                                         sza=geom[..., 2],
         #                                         saa=geom[..., 3])
 
         ds.close()
 
         return data, geom
 
-
-
-
-
-
-
-
     def _load_s2(self) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
 
         # ? bands = self.config.sensor.selected_bands or (
-        #    list(constants.VIIRS_500M_REFLECTANCE_BANDS) + 
+        #    list(constants.VIIRS_500M_REFLECTANCE_BANDS) +
         #    list(constants.VIIRS_1KM_REFLECTANCE_BANDS)
-        #)
+        # )
 
-        #if self.config.sensor.apply_topo_correction:
+        # if self.config.sensor.apply_topo_correction:
         #    self._perform_topo_correction()
 
         pass
-    
 
+    def _load_emit(
+        self, img_file: Path
+    ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
 
-
-
-
-    def _load_emit(self, img_file: Path) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
-
-        # TODO for right now, selected bands will be ignored... 
+        # TODO for right now, selected bands will be ignored...
 
         with nc.Dataset(img_file) as ds:
-            glt_x = ds.groups['location']['glt_x'][:].flatten().astype(int) - 1
-            glt_y = ds.groups['location']['glt_y'][:].flatten().astype(int) - 1
-            rows, cols = ds.groups['location']['glt_x'].shape
+            glt_x = ds.groups["location"]["glt_x"][:].flatten().astype(int) - 1
+            glt_y = ds.groups["location"]["glt_y"][:].flatten().astype(int) - 1
+            rows, cols = ds.groups["location"]["glt_x"].shape
 
         with xr.open_dataset(img_file) as ds:
             downtrack, crosstrack, bands = ds.reflectance.shape
@@ -405,11 +404,11 @@ class SpiresData:
 
         valid_mask = (glt_x >= 0) & (glt_y >= 0)
         valid_indices = glt_y[valid_mask] * crosstrack + glt_x[valid_mask]
-        
+
         flat_data = np.full((bands, rows * cols), np.nan, dtype=np.float32)
         flat_data[:, valid_mask] = raw_data[valid_indices].T
         data = flat_data.reshape(bands, rows, cols)
-     
+
         # NOTE Assumes near-nadir for ISS EMIT observation
         # This could be improved in the future but I don't think EMIT currently supplies vza
         # with the L2A RFL product - perhaps in the masks?
@@ -420,11 +419,17 @@ class SpiresData:
         # Then solar geometry. It is not given from EMIT data but can be estimated from pysolar
         time_str = ds.attrs["time_coverage_start"]
         acq_time = datetime.fromisoformat(time_str).astimezone(timezone.utc)
-        src_transform = Affine(ds.geotransform[1], ds.geotransform[2], ds.geotransform[0],
-                               ds.geotransform[4], ds.geotransform[5], ds.geotransform[3])
-        
+        src_transform = Affine(
+            ds.geotransform[1],
+            ds.geotransform[2],
+            ds.geotransform[0],
+            ds.geotransform[4],
+            ds.geotransform[5],
+            ds.geotransform[3],
+        )
+
         # For speed, we can just solve it for corner data and then do interpolation
-        corner_pixels = [(0, 0), (cols-1, 0), (0, rows-1), (cols-1, rows-1)]
+        corner_pixels = [(0, 0), (cols - 1, 0), (0, rows - 1), (cols - 1, rows - 1)]
         coner_data = []
 
         for c, r in corner_pixels:
@@ -446,59 +451,59 @@ class SpiresData:
         saa = interp(tl[1], tr[1], bl[1], br[1]).astype(np.float32)
 
         geom = np.stack([vza, vaa, sza, saa])
-        
+
         # Apply cleaning of some noisy wavelengths around deep water features
-        mask = (self.config.sensor.wavelength_full < 495) | \
-               ((self.config.sensor.wavelength_full >= 1325) & (self.config.sensor.wavelength_full < 1468)) | \
-               ((self.config.sensor.wavelength_full >= 1765) & (self.config.sensor.wavelength_full <= 1967))
+        mask = (
+            (self.config.sensor.wavelength_full < 495)
+            | (
+                (self.config.sensor.wavelength_full >= 1325)
+                & (self.config.sensor.wavelength_full < 1468)
+            )
+            | (
+                (self.config.sensor.wavelength_full >= 1765)
+                & (self.config.sensor.wavelength_full <= 1967)
+            )
+        )
         data[mask, :, :] = np.nan
 
         # Apply user band mask if given
-        #if self.config.sensor.selected_bands is not None:
+        # if self.config.sensor.selected_bands is not None:
         #    data = data[np.isin(np.arange(data.shape[0]), self.config.sensor.selected_bands), :, :]
 
-
         if self.config.option.resampling_method is not None:
-            data = self._warp_data(data.reshape(bands, rows, cols), 
-                                            src_transform, 
-                                            'EPSG:4326')
-            
-            geom = self._warp_data(geom, src_transform, 'EPSG:4326')
+            data = self._warp_data(
+                data.reshape(bands, rows, cols), src_transform, constants.EMIT_CRS
+            )
 
-        #if self.config.sensor.apply_topo_correction:
-        #    data = self._perform_topo_correction(image=data, 
-        #                                         sza=geom[..., 2], 
+            geom = self._warp_data(geom, src_transform, constants.EMIT_CRS)
+
+        # if self.config.sensor.apply_topo_correction:
+        #    data = self._perform_topo_correction(image=data,
+        #                                         sza=geom[..., 2],
         #                                         saa=geom[..., 3])
 
         ds.close()
-        
+
         return data, geom
 
-
-
-
-
-
-
-
-
-
-
     def _go_viewable_gap_fraction_adjustment(self) -> None:
-        
+
         if self.slope is None:
             slope = 0.0
         else:
             slope = self.slope
-        
+
         if self.aspect is None:
             aspect = 0.0
         else:
             aspect = self.aspect
 
         # See Liu et al 2008 for example. Default is b_R=2.7 to represent Lodgepole Pine (Bair et al., 2021).
-        b_R = self.config.option.average_vertical_crown_radius / self.config.option.average_horizontal_crown_radius
-        
+        b_R = (
+            self.config.option.average_vertical_crown_radius
+            / self.config.option.average_horizontal_crown_radius
+        )
+
         theta_v_prime = np.arctan(b_R * np.tan(np.radians(self.sensor_zenith)))
         theta_s_prime = np.radians(
             90 - np.degrees(np.arctan((b_R * np.tan(np.radians(90 - slope)))))
@@ -515,13 +520,6 @@ class SpiresData:
             )
         )
 
-
-
-
-
-
-
-
     def _perform_topo_correction(self, image, sza, saa) -> npt.NDArray[np.float32]:
 
         sza = sza.squeeze()
@@ -533,31 +531,44 @@ class SpiresData:
         # Cache in case we are running for many scenes
         if self.lut_dir is None or self.lut_dif is None:
             ds = xr.open_dataset(self.config.srtmnet)
-            
+
             dims = ("AOT550", "H2OSTR", "surface_elevation_km", "solar_zenith", "wl")
-            points = (ds.AOT550.values, ds.H2OSTR.values, ds.surface_elevation_km.values, ds.solar_zenith.values)
+            points = (
+                ds.AOT550.values,
+                ds.H2OSTR.values,
+                ds.surface_elevation_km.values,
+                ds.solar_zenith.values,
+            )
 
             data_dir = ds.transm_down_dir.transpose(*dims).values
             data_dif = ds.transm_down_dif.transpose(*dims).values
-            
-            self.lut_dir = RegularGridInterpolator(points, data_dir, bounds_error=False, fill_value=None)
-            self.lut_dif = RegularGridInterpolator(points, data_dif, bounds_error=False, fill_value=None)
-            
+
+            self.lut_dir = RegularGridInterpolator(
+                points, data_dir, bounds_error=False, fill_value=None
+            )
+            self.lut_dif = RegularGridInterpolator(
+                points, data_dif, bounds_error=False, fill_value=None
+            )
+
             self.lut_wl = ds.wl.values
             ds.close()
 
         rows, cols = image.shape[:2]
         aod = np.full((rows, cols), self.config.option.atmosphere_aod)
         wv = np.full((rows, cols), self.config.option.atmosphere_watervapor_gcm2)
-         
+
         img_grid = np.stack([aod, wv, alt, sza], axis=-1)
-        
+
         Edir = self.lut_dir(img_grid)
         Edif = self.lut_dif(img_grid)
 
         # Interpolate coarse RT sims to sensor wavelengths
-        Edir = interp1d(self.lut_wl, Edir, axis=-1, kind='linear', fill_value="extrapolate")(self.config.sensor.wavelength)
-        Edif = interp1d(self.lut_wl, Edif, axis=-1, kind='linear', fill_value="extrapolate")(self.config.sensor.wavelength)
+        Edir = interp1d(
+            self.lut_wl, Edir, axis=-1, kind="linear", fill_value="extrapolate"
+        )(self.config.sensor.wavelength)
+        Edif = interp1d(
+            self.lut_wl, Edif, axis=-1, kind="linear", fill_value="extrapolate"
+        )(self.config.sensor.wavelength)
 
         # Assume hooking effect after 1500 nm is negligible (Bair et al., 2025)
         # In other words, this assumes 100% direct light after 1500 nm
@@ -566,19 +577,20 @@ class SpiresData:
         Edif[..., atm_lut_mask] = 0.0
 
         mu_0 = np.cos(np.radians(sza))
-        mu_s = (np.cos(np.radians(sza)) * np.cos(np.radians(slope)) + 
-                np.sin(np.radians(sza)) * np.sin(np.radians(slope)) * np.cos(np.radians(saa - aspect)))
+        mu_s = np.cos(np.radians(sza)) * np.cos(np.radians(slope)) + np.sin(
+            np.radians(sza)
+        ) * np.sin(np.radians(slope)) * np.cos(np.radians(saa - aspect))
 
         # apply terrain shadowing
-        #shadow_mask = self._apply_shadow_mask()
-        shadow_mask = 1.0 # TODO
+        # shadow_mask = self._apply_shadow_mask()
+        shadow_mask = 1.0  # TODO
         mu_s = shadow_mask * mu_s
 
         # limit the correction for shaded / low signal slopes
         mu_s = np.clip(mu_s, constants.MIN_MU_S, 1.0)
 
         # apply correction for terrain hooking
-        denom = (Edir * (mu_s / mu_0) + Edif * self.skyview)
+        denom = Edir * (mu_s / mu_0) + Edif * self.skyview
         denom = np.clip(denom, 1e-6, None)
         topo_corrected_image = image * ((Edir + Edif) / denom)
 
@@ -590,18 +602,8 @@ class SpiresData:
 
         return topo_corrected_image.astype(np.float32)
 
-
-
-
-
-
-
-
-
-
     def _apply_shadow_mask(self) -> npt.NDArray[np.float32]:
-        """TODO can store this too in memory for user
-        """
+        """TODO can store this too in memory for user"""
         rows, cols = self.dem.shape[:2]
         pixel_list = [(i, j) for i in range(rows) for j in range(cols)]
         results = Parallel(n_jobs=self.config.option.cpu_cores)(
@@ -609,41 +611,37 @@ class SpiresData:
         )
         shadow_mask = np.array(results).reshape(rows, cols)
         return shadow_mask[..., np.newaxis]
-    
 
     def _ray_trace_pixel(self, i, j):
 
         pix_size = self.sensor_resolution
         i_lim, j_lim = self.dem.shape[:2]
-        
+
         # ray path
         tan_theta_e = np.tan(np.radians(90 - self.sza))
         tan_sundir = -1 * np.tan(np.radians(self.saa))
-        
+
         # Search length # TODO to be constant
         PIXEL_SEARCH_LENGTH_RAY_TRACE = 300
-        y_mover = np.arange(0, PIXEL_SEARCH_LENGTH_RAY_TRACE+0.1, 1)
-        if self.saa > 270 or self.saa < 90: y_mover *= -1
+        y_mover = np.arange(0, PIXEL_SEARCH_LENGTH_RAY_TRACE + 0.1, 1)
+        if self.saa > 270 or self.saa < 90:
+            y_mover *= -1
         x_mover = np.round(y_mover * tan_sundir).astype(int)
-        
+
         y, x = i + y_mover, j + x_mover
-        
+
         # filter out of bounds
-        mask = (y < i_lim-1) & (x < j_lim-1) & (y >= 0) & (x >= 0)
+        mask = (y < i_lim - 1) & (x < j_lim - 1) & (y >= 0) & (x >= 0)
         y, x = y[mask], x[mask]
-        
+
         # interpolate
         zi = map_coordinates(self.dem, np.vstack((y, x)), order=1)
-        h = (np.sqrt(((y-i)*pix_size)**2 + ((x-j)*pix_size)**2)) * tan_theta_e + self.dem[i,j]
-        
+        h = (
+            np.sqrt(((y - i) * pix_size) ** 2 + ((x - j) * pix_size) ** 2)
+        ) * tan_theta_e + self.dem[i, j]
+
         # 0 = shadow ; 1=no shadow
         return 0 if ((h[1:] < zi[1:]).any()) else 1
-
-
-
-
-
-
 
     def _warp_data(self, source, src_transform, src_crs) -> npt.NDArray[np.float32]:
 
@@ -684,14 +682,21 @@ class SpiresData:
 
         return dst_array.transpose(1, 2, 0)
 
-
     def _filter_by_date(self, file_list: List[Path]) -> List[Path]:
         if not (self.config.option.start_date or self.config.option.end_date):
             return sorted(file_list)
-            
-        start = datetime.strptime(self.config.option.start_date, "%Y-%m-%d") if self.config.option.start_date else datetime.min
-        end = datetime.strptime(self.config.option.end_date, "%Y-%m-%d") if self.config.option.end_date else datetime.max
-        
+
+        start = (
+            datetime.strptime(self.config.option.start_date, "%Y-%m-%d")
+            if self.config.option.start_date
+            else datetime.min
+        )
+        end = (
+            datetime.strptime(self.config.option.end_date, "%Y-%m-%d")
+            if self.config.option.end_date
+            else datetime.max
+        )
+
         filtered = []
         for f in file_list:
             f_date = self._get_date_from_str(f.name)
@@ -699,11 +704,8 @@ class SpiresData:
                 filtered.append(f)
         return sorted(filtered)
 
-
-
-
     def _get_date_from_str(self, filename: str) -> Optional[datetime]:
-        parts = re.findall(r'\d+', filename)
+        parts = re.findall(r"\d+", filename)
         for part in parts:
             for fmt in ("%Y%j", "%Y%m%d"):
                 try:
@@ -713,9 +715,7 @@ class SpiresData:
         return None
 
 
-
 # TESTING
 data = SpiresData("/Users/bawilder/Code/SPIReS/spires-io/example_config.json")
 
 data.load()
-
