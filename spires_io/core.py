@@ -57,8 +57,8 @@ class SpiresData:
         }
         self.load_sensor_data = sensor_loaders.get(self.sensor_name)
 
-    # The two main methods that user has access to Load everything specificed in the config
-    # and after which, can run cluster if this is somethign they want to do
+
+
     def load(self) -> None:
 
         # Load all static data first
@@ -204,13 +204,26 @@ class SpiresData:
 
     def cluster(self, method) -> None:
         pass
+    
+    def write(self, spires_inversion_results, output_dir=None) -> None:
 
-    # Everything below here will be incorperated into the load or cluster
-    # so users can run spires_data.load() .... spires_data.cluster()
+        # Determine if output dir is a path or folder
+        # dont allow file
+        # if its a folder
+        # we can use the output dir and save the file and append _spires.tif to the end
+        # replacing the extension
 
-    #####
-    #####
-    #####
+        # the shape of spires_inversion_results is res.x .. for 2d array.. but what about time? 
+
+        # WRITE should definitely live here 
+        # in fact, post-process likely should not be its own repo since we have all needed information here and it can be accessbile via write() in SpiresData()
+
+
+        pass
+
+
+
+
 
     def _validate_dimensions(self) -> None:
 
