@@ -45,7 +45,7 @@ class SensorConfig:
             raise ValueError(
                 f"Sensor name '{self.name}' not in supported: {constants.SUPPORTED_SENSORS}"
             )
-        
+
         self.resolution = constants.DEFAULT_RESOLUTION.get(self.name.lower())
 
         meta = constants.SENSORS_META.get(self.name)
@@ -57,20 +57,25 @@ class SensorConfig:
             # This is hacky, but to allow VIIRS+MODIS etc to have band names that are string and
             # hyperspectral to be band indicies which may be easier to use. TODO
             if isinstance(self.band_names_full[0], (str, np.str_)):
-                mask = np.isin(self.band_names_full.astype(str), 
-                               np.array(self.selected_bands).astype(str))
+                mask = np.isin(
+                    self.band_names_full.astype(str),
+                    np.array(self.selected_bands).astype(str),
+                )
             else:
-                mask = np.isin(self.band_names_full.astype(float), 
-                               np.array(self.selected_bands).astype(float))
+                mask = np.isin(
+                    self.band_names_full.astype(float),
+                    np.array(self.selected_bands).astype(float),
+                )
             if not np.any(mask):
                 raise ValueError(f"No bands matched selection: {self.selected_bands}")
-            
+
             self.band_names = self.band_names_full[mask]
             self.wavelength = self.wavelength_full[mask]
 
         # Search to see if we need to apply the topographic correction for hooking
-        self.apply_topo_correction = meta.get("topo_map", {}).get(self.product_version, False)
-
+        self.apply_topo_correction = meta.get("topo_map", {}).get(
+            self.product_version, False
+        )
 
 
 @dataclass
@@ -93,7 +98,6 @@ class OptionsConfig:
     max_sensor_zenith: float = 65.0
     max_solar_zenith: float = 85.0
 
-
     def __post_init__(self) -> None:
         if self.cpu_cores < 1:
             raise ValueError("cpu_cores must be >= 1")
@@ -108,7 +112,9 @@ class OptionsConfig:
             ]:
                 raise ValueError(f"Invalid resampling method: {self.resampling_method}")
 
-        self.atmosphere_aod = max(constants.MIN_AOD, min(self.atmosphere_aod, constants.MAX_AOD))
+        self.atmosphere_aod = max(
+            constants.MIN_AOD, min(self.atmosphere_aod, constants.MAX_AOD)
+        )
 
         self.atmosphere_watervapor_gcm2 = max(
             constants.MIN_H2O, min(self.atmosphere_watervapor_gcm2, constants.MAX_H2O)
@@ -121,7 +127,6 @@ class OptionsConfig:
         self.max_solar_zenith = max(
             constants.MIN_ZENITH, min(self.max_solar_zenith, constants.MAX_ZENITH)
         )
-
 
 
 @dataclass
@@ -154,7 +159,7 @@ class InversionConfig:
 
 class SpiresConfig:
     def __init__(self, config_file: str) -> None:
-        
+
         self.srtmnet = None
 
         with open(config_file, "r") as f:
@@ -168,17 +173,21 @@ class SpiresConfig:
 
         if self.option.canopy_vza_adjustment:
             if self.files.canopy_fraction is None:
-                raise ValueError(f"If setting canopy vza adjustment to be true a canopy fraction data must be provided.")
+                raise ValueError(
+                    f"If setting canopy vza adjustment to be true a canopy fraction data must be provided."
+                )
 
         if self.option.ignore_topography_correction:
             self.sensor.apply_topo_correction = False
 
         if self.sensor.apply_topo_correction:
-            for f in ["dem", "slope", "aspect"]:
-                path = Path(getattr(self.files, f) or "")
-                if not path.is_file():
-                    raise FileNotFoundError(f"Topography data {f} missing at {path}")
-            
-            pkg = importlib.resources.files("spires_io.data.topo_correction_lut")
-            self.srtmnet = pkg.joinpath("srtmnet_coarse.nc")
-
+            print("WARNING: topo correction not yet implemented.")
+        # TODO topo correction not yet implemented
+        # if self.sensor.apply_topo_correction:
+        #    for f in ["dem", "slope", "aspect"]:
+        #        path = Path(getattr(self.files, f) or "")
+        #        if not path.is_file():
+        #            raise FileNotFoundError(f"Topography data {f} missing at {path}")
+        #
+        #    pkg = importlib.resources.files("spires_io.data.topo_correction_lut")
+        #    self.srtmnet = pkg.joinpath("srtmnet_coarse.nc")
