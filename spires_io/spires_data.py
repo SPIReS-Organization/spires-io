@@ -1,10 +1,14 @@
 """Xarray-backed SPIReS inversion input data."""
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import xarray as xr
+
+if TYPE_CHECKING:
+    from spires_io.clustering import ClusteredSpectra, Tolerance
 
 
 SCENE_REQUIRED_VARIABLES = ("reflectance", "solar_zenith", "valid_inversion_mask")
@@ -131,9 +135,38 @@ class SpiresData:
             dataset["background_reflectance"] = self.background.copy()
         return dataset
 
-    def cluster(self, *args, **kwargs):
-        """Reserve the clustering API for a later implementation."""
-        raise NotImplementedError("Pixel clustering is not implemented yet")
+    def cluster(
+        self,
+        *,
+        features: Sequence[str] | None = None,
+        valid_mask: xr.DataArray | np.ndarray | None = None,
+        representative_method: str = "cluster_mean",
+        tolerance: "Tolerance" = 0.02,
+        reflectance_tol: "Tolerance | None" = None,
+        background_tol: "Tolerance | None" = None,
+        solar_zenith_tol: "Tolerance | None" = None,
+    ) -> "ClusteredSpectra":
+        """Cluster valid scene pixels by selected reflectance/context features."""
+        from spires_io.clustering import cluster_spectra_block
+
+        cluster_valid_mask = (
+            self.valid_mask
+            if valid_mask is None
+            else _validate_valid_mask_override(self.scene, valid_mask)
+        )
+
+        return cluster_spectra_block(
+            reflectance=self.target_spectra.values,
+            background=None if self.background is None else self.background.values,
+            solar_zenith=self.solar_zenith.values,
+            features=features,
+            valid_mask=cluster_valid_mask.values,
+            representative_method=representative_method,
+            tolerance=tolerance,
+            reflectance_tol=reflectance_tol,
+            background_tol=background_tol,
+            solar_zenith_tol=solar_zenith_tol,
+        )
 
 
 def _validate_scene(scene: xr.Dataset) -> None:
@@ -161,6 +194,24 @@ def _validate_mask(scene: xr.Dataset, mask: xr.DataArray) -> xr.DataArray:
         raise ValueError("mask must have dims ('y', 'x')")
     _require_matching_coords(scene, mask, ("y", "x"), "mask")
     return mask.astype(bool)
+
+
+def _validate_valid_mask_override(
+    scene: xr.Dataset,
+    valid_mask: xr.DataArray | np.ndarray,
+) -> xr.DataArray:
+    if isinstance(valid_mask, xr.DataArray):
+        if valid_mask.dims != ("y", "x"):
+            raise ValueError("valid_mask must have dims ('y', 'x')")
+        _require_matching_coords(scene, valid_mask, ("y", "x"), "valid_mask")
+        return valid_mask.astype(bool)
+
+    return xr.DataArray(
+        np.asarray(valid_mask, dtype=bool),
+        dims=("y", "x"),
+        coords={dim: scene.coords[dim].values for dim in ("y", "x")},
+        name="valid_mask",
+    )
 
 
 def _require_matching_coords(

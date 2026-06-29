@@ -179,8 +179,8 @@ def test_inversion_inputs_returns_float64_arrays_and_updated_valid_mask():
     xr.testing.assert_identical(inputs["valid_mask"], expected_valid)
 
 
-def test_cluster_is_reserved():
+def test_default_cluster_requires_background():
     scene = prepare_modis_scene_for_inversion(build_mock_modis_raw_dataset())
 
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="background is required"):
         SpiresData.from_scene(scene).cluster()
