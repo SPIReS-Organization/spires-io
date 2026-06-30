@@ -80,7 +80,18 @@ class SpiresDataLoader:
             _single_scene_ancillary_sources(config),
             target_scene=scene,
         )
-        return SpiresData.from_scene(scene, background=background, ancillary=ancillary)
+        data = SpiresData.from_scene(
+            scene,
+            background=background,
+            ancillary=ancillary,
+            cluster_defaults=config.clustering.to_cluster_kwargs(),
+        )
+        if config.canopy.viewable_fraction:
+            data = data.assign_viewable_canopy_fraction(
+                average_vertical_crown_radius=config.canopy.average_vertical_crown_radius,
+                average_horizontal_crown_radius=config.canopy.average_horizontal_crown_radius,
+            )
+        return data
 
     def load_item(self, item: SceneManifestItem | Mapping[str, Any]) -> SpiresData:
         """Load one scene manifest item using this loader's run-wide policy."""
@@ -96,7 +107,21 @@ class SpiresDataLoader:
         )
         background = self._background_loader(item.background_image, target_scene=scene)
         ancillary = self._ancillary_loader(item.ancillary, target_scene=scene)
-        data = SpiresData.from_scene(scene, background=background, ancillary=ancillary)
+        data = SpiresData.from_scene(
+            scene,
+            background=background,
+            ancillary=ancillary,
+            cluster_defaults=self.run_config.clustering.to_cluster_kwargs(),
+        )
+        if self.run_config.canopy.viewable_fraction:
+            data = data.assign_viewable_canopy_fraction(
+                average_vertical_crown_radius=(
+                    self.run_config.canopy.average_vertical_crown_radius
+                ),
+                average_horizontal_crown_radius=(
+                    self.run_config.canopy.average_horizontal_crown_radius
+                ),
+            )
         return _assign_manifest_masks(data, item.masks, scene, self._mask_loader)
 
 
@@ -110,11 +135,8 @@ def load_background_image(
 
 
 def _reader_kwargs_from_single_scene_config(config: SpiresConfig) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {
-        "lut_file": config.files.lut,
-        "max_sensor_zenith": config.option.max_sensor_zenith,
-        "max_solar_zenith": config.option.max_solar_zenith,
-    }
+    kwargs: dict[str, Any] = config.reader.to_reader_kwargs()
+    kwargs["lut_file"] = config.files.lut
     if config.sensor.selected_bands is not None:
         kwargs["bands"] = list(config.sensor.selected_bands)
     if config.files.cloud_mask is not None:
@@ -123,8 +145,7 @@ def _reader_kwargs_from_single_scene_config(config: SpiresConfig) -> dict[str, A
 
 
 def _reader_kwargs_from_run_config(config: SpiresRunConfig) -> dict[str, Any]:
-    kwargs = dict(config.reader_options)
-    kwargs.update(config.mask_policy)
+    kwargs = config.reader.to_reader_kwargs()
     if config.sensor.selected_bands is not None:
         kwargs.setdefault("bands", list(config.sensor.selected_bands))
     return kwargs

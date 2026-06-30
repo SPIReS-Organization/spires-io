@@ -83,3 +83,19 @@ def test_spires_config_requires_background_image_or_deprecated_alias(tmp_path):
 
     with pytest.raises(ValueError, match="background_image"):
         SpiresConfig(config_path)
+
+
+def test_spires_config_rejects_moved_options(tmp_path):
+    config_path = tmp_path / "spires_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "files": _required_files(),
+                "sensor": {"name": "modis"},
+                "options": {"max_sensor_zenith": 50.0},
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="options.max_sensor_zenith -> reader"):
+        SpiresConfig(config_path)

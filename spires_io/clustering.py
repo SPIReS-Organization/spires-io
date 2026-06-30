@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Union
 
 import numpy as np
 
@@ -56,10 +56,9 @@ def cluster_spectra_rows(
     features: Sequence[FeatureName] | None = None,
     valid_mask: np.ndarray | None = None,
     representative_method: RepresentativeMethod = "cluster_mean",
-    tolerance: Tolerance = 0.02,
-    reflectance_tol: Tolerance | None = None,
-    background_tol: Tolerance | None = None,
-    solar_zenith_tol: Tolerance | None = None,
+    reflectance_tol: Tolerance = 0.02,
+    background_tol: Tolerance = 0.02,
+    solar_zenith_tol: Tolerance = 2.0,
 ) -> ClusteredSpectra:
     """Cluster rows into approximate unique feature sets."""
     selected_features = _normalize_features(features)
@@ -75,7 +74,6 @@ def cluster_spectra_rows(
     valid_flat_indices = np.flatnonzero(valid)
     tolerances = _normalize_feature_tolerances(
         arrays,
-        tolerance=tolerance,
         reflectance_tol=reflectance_tol,
         background_tol=background_tol,
         solar_zenith_tol=solar_zenith_tol,
@@ -134,10 +132,9 @@ def cluster_spectra_block(
     features: Sequence[FeatureName] | None = None,
     valid_mask: np.ndarray | None = None,
     representative_method: RepresentativeMethod = "cluster_mean",
-    tolerance: Tolerance = 0.02,
-    reflectance_tol: Tolerance | None = None,
-    background_tol: Tolerance | None = None,
-    solar_zenith_tol: Tolerance | None = None,
+    reflectance_tol: Tolerance = 0.02,
+    background_tol: Tolerance = 0.02,
+    solar_zenith_tol: Tolerance = 2.0,
 ) -> ClusteredSpectra:
     """Cluster an arbitrary block shaped ``(..., band)`` for spectral features."""
     selected_features = _normalize_features(features)
@@ -164,7 +161,6 @@ def cluster_spectra_block(
         features=selected_features,
         valid_mask=flat_valid_mask,
         representative_method=representative_method,
-        tolerance=tolerance,
         reflectance_tol=reflectance_tol,
         background_tol=background_tol,
         solar_zenith_tol=solar_zenith_tol,
@@ -392,30 +388,26 @@ def _build_valid_mask(
 def _normalize_feature_tolerances(
     arrays: dict[FeatureName, np.ndarray],
     *,
-    tolerance: Tolerance,
-    reflectance_tol: Tolerance | None,
-    background_tol: Tolerance | None,
-    solar_zenith_tol: Tolerance | None,
+    reflectance_tol: Tolerance,
+    background_tol: Tolerance,
+    solar_zenith_tol: Tolerance,
 ) -> dict[FeatureName, np.ndarray]:
     tolerances: dict[FeatureName, np.ndarray] = {}
     if "reflectance" in arrays:
         tolerances["reflectance"] = _normalize_tolerance(
             reflectance_tol,
-            tolerance,
             arrays["reflectance"].shape[1],
             "reflectance_tol",
         )
     if "background" in arrays:
         tolerances["background"] = _normalize_tolerance(
             background_tol,
-            tolerance,
             arrays["background"].shape[1],
             "background_tol",
         )
     if "solar_zenith" in arrays:
         tolerances["solar_zenith"] = _normalize_tolerance(
             solar_zenith_tol,
-            _scale_tolerance(tolerance, 100.0),
             1,
             "solar_zenith_tol",
         )
@@ -423,13 +415,11 @@ def _normalize_feature_tolerances(
 
 
 def _normalize_tolerance(
-    value: Tolerance | None,
-    fallback: Tolerance,
+    value: Tolerance,
     size: int,
     name: str,
 ) -> np.ndarray:
-    base = fallback if value is None else value
-    arr = np.asarray(base, dtype=np.float64)
+    arr = np.asarray(value, dtype=np.float64)
     if arr.ndim == 0:
         out = np.full(size, float(arr), dtype=np.float64)
     elif arr.ndim == 1 and arr.size == size:
@@ -441,13 +431,6 @@ def _normalize_tolerance(
     if np.any(out <= 0):
         raise ValueError(f"{name} must be strictly positive")
     return np.ascontiguousarray(out)
-
-
-def _scale_tolerance(value: Tolerance, factor: float) -> Tolerance:
-    arr = np.asarray(value, dtype=np.float64)
-    if arr.ndim == 0:
-        return float(arr) * factor
-    return arr * factor
 
 
 def _representative_values(

@@ -18,11 +18,15 @@ def test_spires_run_config_parses_global_policy(tmp_path):
         "run_config.json",
         {
             "sensor": {"name": "modis", "selected_bands": ["1", "2"]},
-            "reader_options": {"lut_file": "lut.mat"},
-            "mask_policy": {"cloud_mask_policy": "snow_wins"},
+            "reader": {"lut_file": "lut.mat", "cloud_mask_policy": "snow_wins"},
             "inversion": {"max_eval": 50},
-            "clustering": {"method": "kmeans", "n_clusters": 12},
-            "resampling": {"method": "nearest"},
+            "clustering": {
+                "enabled": True,
+                "features": ["reflectance", "solar_zenith"],
+                "solar_zenith_tol": 3.0,
+            },
+            "spatial": {"resampling_method": "nearest"},
+            "canopy": {"viewable_fraction": True},
             "output_policy": {"root": "outputs"},
             "ancillary_paths": {"dem": "dem.tif"},
             "description": "example batch",
@@ -34,11 +38,14 @@ def test_spires_run_config_parses_global_policy(tmp_path):
     assert config.sensor.name == "modis"
     assert config.sensor.selected_bands == ["1", "2"]
     assert list(config.sensor.band_names) == ["1", "2"]
-    assert config.reader_options == {"lut_file": "lut.mat"}
-    assert config.mask_policy == {"cloud_mask_policy": "snow_wins"}
+    assert config.reader.extra == {"lut_file": "lut.mat"}
+    assert config.reader.cloud_mask_policy == "snow_wins"
     assert config.inversion.max_eval == 50
-    assert config.clustering == {"method": "kmeans", "n_clusters": 12}
-    assert config.resampling == {"method": "nearest"}
+    assert config.clustering.enabled
+    assert config.clustering.features == ("reflectance", "solar_zenith")
+    assert config.clustering.solar_zenith_tol == 3.0
+    assert config.spatial.resampling_method == "nearest"
+    assert config.canopy.viewable_fraction
     assert config.output_policy == {"root": "outputs"}
     assert config.ancillary_paths == {"dem": "dem.tif"}
     assert config.extra == {"description": "example batch"}
@@ -63,7 +70,7 @@ def test_spires_run_config_accepts_sensor_string_and_output_aliases(tmp_path):
 
 
 def test_spires_run_config_rejects_missing_sensor(tmp_path):
-    config_path = _write_json(tmp_path, "run_config.json", {"reader_options": {}})
+    config_path = _write_json(tmp_path, "run_config.json", {"reader": {}})
 
     with pytest.raises(ValueError, match="missing required key 'sensor'"):
         SpiresRunConfig.from_file(config_path)
@@ -80,11 +87,33 @@ def test_spires_run_config_rejects_non_object_sections(tmp_path):
     config_path = _write_json(
         tmp_path,
         "run_config.json",
-        {"sensor": "modis", "reader_options": ["bad"]},
+        {"sensor": "modis", "reader": ["bad"]},
     )
 
-    with pytest.raises(ValueError, match="reader_options"):
+    with pytest.raises(ValueError, match="reader"):
         SpiresRunConfig.from_file(config_path)
+
+
+def test_spires_run_config_rejects_legacy_sections(tmp_path):
+    config_path = _write_json(
+        tmp_path,
+        "run_config.json",
+        {"sensor": "modis", "reader_options": {"lut_file": "lut.mat"}},
+    )
+
+    with pytest.raises(ValueError, match="reader_options -> reader"):
+        SpiresRunConfig.from_file(config_path)
+
+
+def test_spires_run_config_uses_explicit_cluster_defaults(tmp_path):
+    config_path = _write_json(tmp_path, "run_config.json", {"sensor": "modis"})
+
+    config = SpiresRunConfig.from_file(config_path)
+
+    assert config.clustering.features == ("reflectance", "background", "solar_zenith")
+    assert config.clustering.reflectance_tol == 0.02
+    assert config.clustering.background_tol == 0.02
+    assert config.clustering.solar_zenith_tol == 2.0
 
 
 def test_scene_manifest_parses_scene_items(tmp_path):

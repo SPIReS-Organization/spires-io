@@ -17,12 +17,9 @@ dependencies = [
     "h5py",
     "rasterio",
     "affine",
-    "joblib",
     "netCDF4",
     "pyproj",
     "rioxarray",
-    "scipy",
-    "pysolar",
 ]
 
 [project.optional-dependencies]

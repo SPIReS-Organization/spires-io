@@ -202,6 +202,75 @@ def test_assign_mask_rejects_coordinate_mismatch():
         SpiresData.from_scene(scene).assign_mask("bad", mask)
 
 
+def test_assign_viewable_canopy_fraction_preserves_raw_canopy_fraction():
+    scene = _cluster_scene()
+    scene["sensor_zenith"] = xr.DataArray(
+        [[0.0, 10.0], [20.0, 30.0]],
+        dims=("y", "x"),
+        coords={dim: scene.coords[dim].values for dim in ("y", "x")},
+        name="sensor_zenith",
+    )
+    scene["sensor_azimuth"] = xr.DataArray(
+        [[90.0, 90.0], [180.0, 180.0]],
+        dims=("y", "x"),
+        coords={dim: scene.coords[dim].values for dim in ("y", "x")},
+        name="sensor_azimuth",
+    )
+    canopy_fraction = xr.DataArray(
+        [[0.25, 0.25], [0.50, 0.50]],
+        dims=("y", "x"),
+        coords={dim: scene.coords[dim].values for dim in ("y", "x")},
+        name="canopy_fraction",
+    )
+    slope = xr.DataArray(
+        [[0.0, 5.0], [10.0, 15.0]],
+        dims=("y", "x"),
+        coords={dim: scene.coords[dim].values for dim in ("y", "x")},
+        name="slope",
+    )
+    aspect = xr.DataArray(
+        [[0.0, 45.0], [90.0, 135.0]],
+        dims=("y", "x"),
+        coords={dim: scene.coords[dim].values for dim in ("y", "x")},
+        name="aspect",
+    )
+    ancillary = xr.Dataset(
+        {
+            "canopy_fraction": canopy_fraction,
+            "slope": slope,
+            "aspect": aspect,
+        }
+    )
+
+    data = SpiresData.from_scene(scene, ancillary=ancillary)
+    updated = data.assign_viewable_canopy_fraction(
+        average_vertical_crown_radius=4.644,
+        average_horizontal_crown_radius=1.72,
+    )
+
+    assert "viewable_canopy_fraction" not in data.ancillary
+    xr.testing.assert_identical(updated.ancillary["canopy_fraction"], canopy_fraction)
+    assert updated.ancillary["viewable_canopy_fraction"].dims == ("y", "x")
+
+    b_r = 4.644 / 1.72
+    theta_v_prime = np.arctan(b_r * np.tan(np.deg2rad(scene["sensor_zenith"])))
+    theta_s_prime = np.deg2rad(
+        90.0 - np.rad2deg(np.arctan(b_r * np.tan(np.deg2rad(90.0 - slope))))
+    )
+    phi_v_prime = np.deg2rad(scene["sensor_azimuth"] - aspect)
+    exponent = np.cos(theta_s_prime) / (
+        np.cos(phi_v_prime) * np.sin(theta_v_prime) * np.sin(theta_s_prime)
+        + np.cos(theta_v_prime) * np.cos(theta_s_prime)
+    )
+    expected = (1.0 - ((1.0 - canopy_fraction) ** exponent)).astype("float32")
+    expected.name = "viewable_canopy_fraction"
+    xr.testing.assert_allclose(
+        updated.ancillary["viewable_canopy_fraction"],
+        expected,
+        rtol=1e-6,
+    )
+
+
 def test_inversion_inputs_requires_background():
     scene = prepare_modis_scene_for_inversion(build_mock_modis_raw_dataset())
 
@@ -273,7 +342,7 @@ def test_cluster_uses_cluster_mean_representatives():
         _cluster_scene(reflectance=reflectance, valid_mask=valid_mask)
     )
 
-    clustered = data.cluster(features=("reflectance",), tolerance=0.05)
+    clustered = data.cluster(features=("reflectance",), reflectance_tol=0.05)
 
     np.testing.assert_allclose(
         clustered.scene["cluster_representative_reflectance"].values,
@@ -281,6 +350,28 @@ def test_cluster_uses_cluster_mean_representatives():
         rtol=1e-6,
     )
     np.testing.assert_array_equal(clustered.scene["cluster_count"].values, np.array([2]))
+
+
+def test_cluster_uses_configured_defaults_when_args_omitted():
+    data = SpiresData.from_scene(
+        _cluster_scene(valid_mask=np.ones((2, 2), dtype=bool)),
+        cluster_defaults={
+            "features": ("reflectance",),
+            "label_name": "configured_cluster",
+            "representative_method": "first_pixel",
+            "reflectance_tol": 0.05,
+        },
+    )
+
+    clustered = data.cluster()
+
+    assert "configured_cluster" in clustered.scene
+    assert clustered.scene["configured_cluster"].attrs["features"] == "reflectance"
+    assert (
+        clustered.scene["cluster_representative_reflectance"]
+        .attrs["representative_method"]
+        == "first_pixel"
+    )
 
 
 def test_cluster_default_features_store_background_and_solar_representatives():

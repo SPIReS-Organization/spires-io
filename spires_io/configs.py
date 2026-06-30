@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import numpy as np
 import importlib.resources
 import json
@@ -125,28 +125,87 @@ class SensorConfig:
 
 @dataclass
 class OptionsConfig:
+    """Temporary catch-all for run options not yet promoted to a named section."""
+
     cpu_cores: int = 1
     start_date: Optional[str] = None
     end_date: Optional[str] = None
-    target_bbox: Optional[list] = None
-    target_crs: Optional[str] = None
-    resampling_method: str = "bilinear"
-    use_custom_sensor_resolution: bool = False
-    clustering_method: Optional[str] = None
-    ignore_cloudmask_for_clustering: bool = False
-    canopy_vza_adjustment: bool = False
     ignore_topography_correction: bool = True
-    average_vertical_crown_radius: float = 4.644
-    average_horizontal_crown_radius: float = 1.72
     atmosphere_aod: float = 0.10
     atmosphere_watervapor_gcm2: float = 0.5
-    max_sensor_zenith: float = 65.0
-    max_solar_zenith: float = 85.0
 
     def __post_init__(self) -> None:
         if self.cpu_cores < 1:
             raise ValueError("cpu_cores must be >= 1")
 
+        self.atmosphere_aod = max(
+            constants.MIN_AOD, min(self.atmosphere_aod, constants.MAX_AOD)
+        )
+
+        self.atmosphere_watervapor_gcm2 = max(
+            constants.MIN_H2O, min(self.atmosphere_watervapor_gcm2, constants.MAX_H2O)
+        )
+
+
+@dataclass(init=False)
+class ReaderConfig:
+    max_sensor_zenith: float = 65.0
+    max_solar_zenith: float = 85.0
+    cloud_mask_policy: str = "strict"
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    def __init__(
+        self,
+        max_sensor_zenith: float = 65.0,
+        max_solar_zenith: float = 85.0,
+        cloud_mask_policy: str = "strict",
+        extra: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self.max_sensor_zenith = max_sensor_zenith
+        self.max_solar_zenith = max_solar_zenith
+        self.cloud_mask_policy = cloud_mask_policy
+        self.extra = dict(extra or {})
+        self.extra.update(kwargs)
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
+        self.max_sensor_zenith = max(
+            constants.MIN_ZENITH, min(self.max_sensor_zenith, constants.MAX_ZENITH)
+        )
+
+        self.max_solar_zenith = max(
+            constants.MIN_ZENITH, min(self.max_solar_zenith, constants.MAX_ZENITH)
+        )
+
+        valid_policies = {
+            "strict",
+            "snow_wins",
+            "ignore_cloud",
+            "ignore_cloud_and_shadow",
+        }
+        if self.cloud_mask_policy not in valid_policies:
+            raise ValueError(
+                "cloud_mask_policy must be one of "
+                f"{sorted(valid_policies)}; got {self.cloud_mask_policy!r}"
+            )
+
+    def to_reader_kwargs(self) -> dict[str, Any]:
+        kwargs = dict(self.extra)
+        kwargs.setdefault("max_sensor_zenith", self.max_sensor_zenith)
+        kwargs.setdefault("max_solar_zenith", self.max_solar_zenith)
+        kwargs.setdefault("cloud_mask_policy", self.cloud_mask_policy)
+        return kwargs
+
+
+@dataclass
+class SpatialConfig:
+    target_bbox: Optional[list] = None
+    target_crs: Optional[str] = None
+    resampling_method: Optional[str] = "bilinear"
+    use_custom_sensor_resolution: bool = False
+
+    def __post_init__(self) -> None:
         if self.resampling_method is not None:
             if self.resampling_method.lower() not in [
                 "average",
@@ -157,21 +216,83 @@ class OptionsConfig:
             ]:
                 raise ValueError(f"Invalid resampling method: {self.resampling_method}")
 
-        self.atmosphere_aod = max(
-            constants.MIN_AOD, min(self.atmosphere_aod, constants.MAX_AOD)
-        )
 
-        self.atmosphere_watervapor_gcm2 = max(
-            constants.MIN_H2O, min(self.atmosphere_watervapor_gcm2, constants.MAX_H2O)
-        )
+@dataclass
+class CanopyConfig:
+    viewable_fraction: bool = False
+    average_vertical_crown_radius: float = 4.644
+    average_horizontal_crown_radius: float = 1.72
 
-        self.max_sensor_zenith = max(
-            constants.MIN_ZENITH, min(self.max_sensor_zenith, constants.MAX_ZENITH)
-        )
+    def __post_init__(self) -> None:
+        if self.average_vertical_crown_radius <= 0:
+            raise ValueError("average_vertical_crown_radius must be > 0")
+        if self.average_horizontal_crown_radius <= 0:
+            raise ValueError("average_horizontal_crown_radius must be > 0")
 
-        self.max_solar_zenith = max(
-            constants.MIN_ZENITH, min(self.max_solar_zenith, constants.MAX_ZENITH)
-        )
+
+@dataclass
+class ClusterConfig:
+    enabled: bool = False
+    features: Sequence[str] = ("reflectance", "background", "solar_zenith")
+    label_name: str = "cluster_label"
+    representative_method: str = "cluster_mean"
+    reflectance_tol: float | list[float] = 0.02
+    background_tol: float | list[float] = 0.02
+    solar_zenith_tol: float | list[float] = 2.0
+    ignore_cloudmask: bool = False
+
+    def __post_init__(self) -> None:
+        from spires_io.clustering import SUPPORTED_CLUSTER_FEATURES
+
+        if self.features is None:
+            raise ValueError("clustering.features must list at least one feature")
+        normalized_features = tuple(str(feature).lower() for feature in self.features)
+        if not normalized_features:
+            raise ValueError("clustering.features must list at least one feature")
+        unknown = sorted(set(normalized_features) - SUPPORTED_CLUSTER_FEATURES)
+        if unknown:
+            raise ValueError(
+                "unsupported clustering feature(s): "
+                f"{unknown}; supported features are {sorted(SUPPORTED_CLUSTER_FEATURES)}"
+            )
+        if len(set(normalized_features)) != len(normalized_features):
+            raise ValueError("clustering.features must not contain duplicates")
+        self.features = normalized_features
+
+        cleaned_label = self.label_name.strip()
+        if not cleaned_label:
+            raise ValueError("clustering.label_name must be non-empty")
+        self.label_name = cleaned_label
+
+        method = self.representative_method.lower()
+        method = {"group_mean": "cluster_mean"}.get(method, method)
+        if method not in {"cluster_mean", "first_pixel"}:
+            raise ValueError(
+                "clustering.representative_method must be one of "
+                "{'cluster_mean', 'first_pixel'}"
+            )
+        self.representative_method = method
+
+        for name in ("reflectance_tol", "background_tol", "solar_zenith_tol"):
+            _validate_positive_tolerance(getattr(self, name), f"clustering.{name}")
+
+    def to_cluster_kwargs(self) -> dict[str, Any]:
+        return {
+            "features": self.features,
+            "label_name": self.label_name,
+            "representative_method": self.representative_method,
+            "reflectance_tol": self.reflectance_tol,
+            "background_tol": self.background_tol,
+            "solar_zenith_tol": self.solar_zenith_tol,
+        }
+
+
+def _validate_positive_tolerance(value: float | list[float], name: str) -> None:
+    arr = np.asarray(value, dtype=np.float64)
+    if arr.ndim > 1:
+        raise ValueError(f"{name} must be a scalar or 1D array")
+    if np.any(arr <= 0):
+        raise ValueError(f"{name} must be strictly positive")
 
 
 @dataclass
@@ -207,11 +328,12 @@ class SpiresRunConfig:
     """Batch/run-wide policy shared by one or more scene manifest items."""
 
     sensor: SensorConfig
-    reader_options: dict[str, Any] = field(default_factory=dict)
-    mask_policy: dict[str, Any] = field(default_factory=dict)
+    reader: ReaderConfig = field(default_factory=ReaderConfig)
+    options: OptionsConfig = field(default_factory=OptionsConfig)
     inversion: InversionConfig = field(default_factory=InversionConfig)
-    clustering: dict[str, Any] = field(default_factory=dict)
-    resampling: dict[str, Any] = field(default_factory=dict)
+    clustering: ClusterConfig = field(default_factory=ClusterConfig)
+    spatial: SpatialConfig = field(default_factory=SpatialConfig)
+    canopy: CanopyConfig = field(default_factory=CanopyConfig)
     output_policy: dict[str, Any] = field(default_factory=dict)
     ancillary_paths: dict[str, Any] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
@@ -227,17 +349,25 @@ class SpiresRunConfig:
         """Build a run config from a JSON-like mapping."""
         if "sensor" not in data:
             raise ValueError("run config is missing required key 'sensor'")
+        _reject_legacy_top_level_sections(data)
+        _reject_moved_options(_section_mapping(data, "options"))
 
         sensor = _parse_sensor_config(data["sensor"])
+        reader = ReaderConfig(**_section_mapping(data, "reader"))
+        options = OptionsConfig(**_section_mapping(data, "options"))
         inversion = InversionConfig(**_section_mapping(data, "inversion"))
+        clustering = ClusterConfig(**_section_mapping(data, "clustering"))
+        spatial = SpatialConfig(**_section_mapping(data, "spatial"))
+        canopy = CanopyConfig(**_section_mapping(data, "canopy"))
 
         known_keys = {
             "sensor",
-            "reader_options",
-            "mask_policy",
+            "reader",
+            "options",
             "inversion",
             "clustering",
-            "resampling",
+            "spatial",
+            "canopy",
             "output",
             "output_policy",
             "ancillary",
@@ -246,11 +376,12 @@ class SpiresRunConfig:
 
         return cls(
             sensor=sensor,
-            reader_options=_section_mapping(data, "reader_options"),
-            mask_policy=_section_mapping(data, "mask_policy"),
+            reader=reader,
+            options=options,
             inversion=inversion,
-            clustering=_section_mapping(data, "clustering"),
-            resampling=_section_mapping(data, "resampling"),
+            clustering=clustering,
+            spatial=spatial,
+            canopy=canopy,
             output_policy=_section_mapping(data, "output_policy", alias="output"),
             ancillary_paths=_section_mapping(data, "ancillary_paths", alias="ancillary"),
             extra={key: value for key, value in data.items() if key not in known_keys},
@@ -377,6 +508,46 @@ def _section_mapping(
     return dict(value)
 
 
+MOVED_OPTION_KEYS = {
+    "target_bbox": "spatial.target_bbox",
+    "target_crs": "spatial.target_crs",
+    "resampling_method": "spatial.resampling_method",
+    "use_custom_sensor_resolution": "spatial.use_custom_sensor_resolution",
+    "clustering_method": "clustering.representative_method",
+    "ignore_cloudmask_for_clustering": "clustering.ignore_cloudmask",
+    "canopy_vza_adjustment": "canopy.viewable_fraction",
+    "average_vertical_crown_radius": "canopy.average_vertical_crown_radius",
+    "average_horizontal_crown_radius": "canopy.average_horizontal_crown_radius",
+    "max_sensor_zenith": "reader.max_sensor_zenith",
+    "max_solar_zenith": "reader.max_solar_zenith",
+}
+
+
+LEGACY_TOP_LEVEL_SECTIONS = {
+    "reader_options": "reader",
+    "mask_policy": "reader",
+    "resampling": "spatial",
+}
+
+
+def _reject_moved_options(options: Mapping[str, Any]) -> None:
+    moved = sorted(set(options) & set(MOVED_OPTION_KEYS))
+    if moved:
+        destinations = ", ".join(
+            f"options.{key} -> {MOVED_OPTION_KEYS[key]}" for key in moved
+        )
+        raise ValueError(f"moved config option(s): {destinations}")
+
+
+def _reject_legacy_top_level_sections(data: Mapping[str, Any]) -> None:
+    legacy = sorted(set(data) & set(LEGACY_TOP_LEVEL_SECTIONS))
+    if legacy:
+        destinations = ", ".join(
+            f"{key} -> {LEGACY_TOP_LEVEL_SECTIONS[key]}" for key in legacy
+        )
+        raise ValueError(f"moved config section(s): {destinations}")
+
+
 class SpiresConfig:
     def __init__(self, config_file: str) -> None:
 
@@ -385,16 +556,23 @@ class SpiresConfig:
         with open(config_file, "r") as f:
             data = json.load(f)
 
+        _reject_legacy_top_level_sections(data)
+        _reject_moved_options(_section_mapping(data, "options"))
         self.files = FilesConfig(**data["files"])
         self.sensor = SensorConfig(**data["sensor"])
-        self.option = OptionsConfig(**data.get("options", {}))
-        self.lut = LookUpTableConfig(**data.get("lut", {}))
-        self.inv = InversionConfig(**data.get("inversion", {}))
+        self.option = OptionsConfig(**_section_mapping(data, "options"))
+        self.reader = ReaderConfig(**_section_mapping(data, "reader"))
+        self.spatial = SpatialConfig(**_section_mapping(data, "spatial"))
+        self.canopy = CanopyConfig(**_section_mapping(data, "canopy"))
+        self.clustering = ClusterConfig(**_section_mapping(data, "clustering"))
+        self.lut = LookUpTableConfig(**_section_mapping(data, "lut"))
+        self.inv = InversionConfig(**_section_mapping(data, "inversion"))
 
-        if self.option.canopy_vza_adjustment:
+        if self.canopy.viewable_fraction:
             if self.files.canopy_fraction is None:
                 raise ValueError(
-                    f"If setting canopy vza adjustment to be true a canopy fraction data must be provided."
+                    "If setting canopy.viewable_fraction to true, "
+                    "files.canopy_fraction must be provided."
                 )
 
         if self.option.ignore_topography_correction:

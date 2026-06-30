@@ -28,11 +28,25 @@ def _scene():
         coords={"y": [0, 1], "x": [10, 11]},
         name="valid_inversion_mask",
     )
+    sensor_zenith = xr.DataArray(
+        np.full((2, 2), 20.0, dtype=np.float32),
+        dims=("y", "x"),
+        coords={"y": [0, 1], "x": [10, 11]},
+        name="sensor_zenith",
+    )
+    sensor_azimuth = xr.DataArray(
+        np.full((2, 2), 90.0, dtype=np.float32),
+        dims=("y", "x"),
+        coords={"y": [0, 1], "x": [10, 11]},
+        name="sensor_azimuth",
+    )
     return xr.Dataset(
         {
             "reflectance": reflectance,
             "solar_zenith": solar_zenith,
             "valid_inversion_mask": valid_mask,
+            "sensor_zenith": sensor_zenith,
+            "sensor_azimuth": sensor_azimuth,
         }
     )
 
@@ -69,7 +83,7 @@ def _write_single_scene_config(tmp_path):
                     "cloud_mask": "cloud.nc",
                 },
                 "sensor": {"name": "modis", "selected_bands": ["1", "2"]},
-                "options": {
+                "reader": {
                     "max_sensor_zenith": 50.0,
                     "max_solar_zenith": 70.0,
                 },
@@ -110,6 +124,7 @@ def test_loader_from_config_loads_single_scene_with_reader_policy(tmp_path):
                 "lut_file": "lut.mat",
                 "max_sensor_zenith": 50.0,
                 "max_solar_zenith": 70.0,
+                "cloud_mask_policy": "strict",
                 "bands": ["1", "2"],
                 "cloud_mask_source": "cloud.nc",
             },
@@ -153,6 +168,46 @@ def test_loader_from_config_assigns_single_scene_ancillary(tmp_path):
 
     assert calls == [({"canopy_fraction": "canopy.tif"}, True)]
     assert data.ancillary.identical(ancillary)
+
+
+def test_loader_from_config_assigns_viewable_canopy_fraction_when_enabled(tmp_path):
+    scene = _scene()
+    background = _background(scene)
+    ancillary = _ancillary(scene)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "files": {
+                    "image_data": "scene.hdf",
+                    "background_image": "background.nc",
+                    "lut": "lut.mat",
+                    "canopy_fraction": "canopy.tif",
+                },
+                "sensor": {"name": "modis"},
+                "canopy": {
+                    "viewable_fraction": True,
+                    "average_vertical_crown_radius": 2.0,
+                    "average_horizontal_crown_radius": 1.0,
+                },
+            }
+        )
+    )
+
+    loader = SpiresDataLoader.from_config(
+        config_path,
+        scene_preparer=lambda source, *, sensor, **kwargs: scene,
+        background_loader=lambda path, *, target_scene: background,
+        ancillary_loader=lambda sources, *, target_scene: ancillary,
+    )
+
+    data = loader.load()
+
+    assert "viewable_canopy_fraction" in data.ancillary
+    xr.testing.assert_identical(
+        data.ancillary["canopy_fraction"],
+        ancillary["canopy_fraction"],
+    )
 
 
 def test_spires_data_from_config_delegates_to_loader(monkeypatch):
@@ -204,8 +259,11 @@ def test_loader_load_item_uses_run_config_and_manifest_item():
     run_config = SpiresRunConfig.from_mapping(
         {
             "sensor": {"name": "viirs", "selected_bands": ["I1", "M4"]},
-            "reader_options": {"lut_file": "lut.mat", "keep_intermediate_reflectance": True},
-            "mask_policy": {"cloud_mask_policy": "ignore_cloud"},
+            "reader": {
+                "lut_file": "lut.mat",
+                "keep_intermediate_reflectance": True,
+                "cloud_mask_policy": "ignore_cloud",
+            },
         }
     )
     item = SceneManifestItem(
@@ -230,6 +288,8 @@ def test_loader_load_item_uses_run_config_and_manifest_item():
             {
                 "lut_file": "lut.mat",
                 "keep_intermediate_reflectance": True,
+                "max_sensor_zenith": 65.0,
+                "max_solar_zenith": 85.0,
                 "cloud_mask_policy": "ignore_cloud",
                 "bands": ["I1", "M4"],
             },
@@ -261,7 +321,17 @@ def test_loader_load_item_accepts_mapping_item():
     )
 
     assert isinstance(data, SpiresData)
-    assert calls == [("scene.hdf", "modis", {})]
+    assert calls == [
+        (
+            "scene.hdf",
+            "modis",
+            {
+                "max_sensor_zenith": 65.0,
+                "max_solar_zenith": 85.0,
+                "cloud_mask_policy": "strict",
+            },
+        )
+    ]
 
 
 def test_loader_load_item_requires_run_config():
