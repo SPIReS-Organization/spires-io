@@ -12,7 +12,7 @@ from spires_io.viirs import (
 )
 from spires_io.viirs import bands as viirs_bands
 from spires_io.viirs.bands import infer_viirs_lut_band_names_from_path
-from spires_io.viirs.hdf import VIIRS_1KM_GRID, VIIRS_500M_GRID
+from spires_io.viirs.fields import VIIRS_1KM_GRID, VIIRS_500M_GRID
 
 
 def write_mock_viirs_hdf(path: Path) -> None:

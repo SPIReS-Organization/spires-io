@@ -8,6 +8,9 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, List
 
 import spires_io.constants as constants
+from spires_io.file_types import ALL_SUPPORTED_FILE_SUFFIXES
+from spires_io.registry import list_supported_sensors, normalize_sensor_name
+from spires_io.sensor_metadata import get_sensor_metadata
 
 
 @dataclass(init=False)
@@ -70,7 +73,7 @@ class FilesConfig:
 
             path = Path(path)
 
-            if path.is_file() and path.suffix.lower() not in constants.VALID_EXTENSIONS:
+            if path.is_file() and path.suffix.lower() not in ALL_SUPPORTED_FILE_SUFFIXES:
                 raise ValueError(f"{path} has invalid file type: {path.suffix}")
 
     @property
@@ -86,16 +89,18 @@ class SensorConfig:
     selected_bands: Optional[List[str]] = None
 
     def __post_init__(self) -> None:
-        if self.name.lower() not in constants.SUPPORTED_SENSORS:
+        try:
+            self.name = normalize_sensor_name(self.name)
+        except ValueError as exc:
             raise ValueError(
-                f"Sensor name '{self.name}' not in supported: {constants.SUPPORTED_SENSORS}"
-            )
+                f"Sensor name '{self.name}' not in supported: {list_supported_sensors()}"
+            ) from exc
 
-        self.resolution = constants.DEFAULT_RESOLUTION.get(self.name.lower())
+        meta = get_sensor_metadata(self.name)
 
-        meta = constants.SENSORS_META.get(self.name)
-        self.band_names_full = meta["bands"]
-        self.wavelength_full = meta["wavelength"]
+        self.resolution = meta.resolution
+        self.band_names_full = meta.bands
+        self.wavelength_full = meta.wavelength
 
         # Allows user to specify which bands to use
         if self.selected_bands is not None:
@@ -116,10 +121,12 @@ class SensorConfig:
 
             self.band_names = self.band_names_full[mask]
             self.wavelength = self.wavelength_full[mask]
+        else:
+            self.band_names = self.band_names_full
+            self.wavelength = self.wavelength_full
 
-        # Search to see if we need to apply the topographic correction for hooking
-        self.apply_topo_correction = meta.get("topo_map", {}).get(
-            self.product_version, False
+        self.apply_topo_correction = (
+            self.product_version in meta.topographic_correction_versions
         )
 
 

@@ -14,6 +14,14 @@ import xarray as xr
 from spires_io.logging_utils import log_event
 from spires_io.base import SceneMetadata, collect_attrs, normalize_path, read_scaled_array
 from spires_io.modis.bands import MODIS_PRODUCT_TO_PLATFORM, resolve_modis_inversion_bands
+from spires_io.modis.fields import (
+    MODIS_1KM_GEOMETRY_FIELDS,
+    MODIS_1KM_GRID_NAME,
+    MODIS_1KM_QA_FIELDS,
+    MODIS_500M_GRID_NAME,
+    MODIS_500M_REFLECTANCE_BANDS,
+    MODIS_500M_SUPPORT_FIELDS,
+)
 from spires_io.modis.geospatial import attach_spatial_ref, copy_spatial_metadata, parse_modis_grid_metadata
 from spires_io.modis.qa import decode_modis_qa_masks, load_external_cloud_masks
 
@@ -25,30 +33,6 @@ MODIS_FILENAME_RE = re.compile(
 )
 
 LOGGER = logging.getLogger(__name__)
-MODIS_1KM_GRID_NAME = "MODIS_Grid_1km_2D"
-MODIS_500M_GRID_NAME = "MODIS_Grid_500m_2D"
-MODIS_500M_REFLECTANCE_BANDS = ("1", "2", "3", "4", "5", "6", "7")
-MODIS_1KM_GEOMETRY_FIELDS = {
-    "sensor_zenith": "SensorZenith_1",
-    "sensor_azimuth": "SensorAzimuth_1",
-    "solar_zenith": "SolarZenith_1",
-    "solar_azimuth": "SolarAzimuth_1",
-}
-MODIS_1KM_QA_FIELDS = {
-    "state_1km": "state_1km_1",
-    "num_observations_1km": "num_observations_1km",
-    "range_1km": "Range_1",
-    "gflags_1km": "gflags_1",
-    "orbit_pnt_1km": "orbit_pnt_1",
-    "granule_pnt_1km": "granule_pnt_1",
-}
-MODIS_500M_SUPPORT_FIELDS = {
-    "num_observations_500m": "num_observations_500m",
-    "qc_500m": "QC_500m_1",
-    "obscov_500m": "obscov_500m_1",
-    "iobs_res_500m": "iobs_res_1",
-    "q_scan_500m": "q_scan_1",
-}
 
 
 def parse_modis_surface_reflectance_filename(path: str | Path) -> SceneMetadata:

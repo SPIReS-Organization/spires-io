@@ -1,14 +1,5 @@
 """VIIRS surface reflectance readers and I/O helpers."""
 
-from spires_io.viirs.ancillary import (
-    create_viirs_ancillary_layout,
-    viirs_annual_ancillary_path,
-    viirs_ancillary_path,
-    viirs_ancillary_root,
-    viirs_sensor_root,
-    viirs_static_ancillary_path,
-    viirs_tile_ancillary_root,
-)
 from spires_io.viirs.bands import (
     VIIRS_1KM_REFLECTANCE_BANDS,
     VIIRS_500M_REFLECTANCE_BANDS,
@@ -22,7 +13,7 @@ from spires_io.viirs.bands import (
     resolve_viirs_inversion_bands_with_source,
 )
 from spires_io.viirs.geospatial import VIIRS_SINUSOIDAL_CRS
-from spires_io.viirs.hdf import (
+from spires_io.viirs.load_surface_reflectance import (
     PLATFORM_BY_PRODUCT,
     open_viirs_surface_reflectance,
     parse_viirs_surface_reflectance_filename,
@@ -36,7 +27,6 @@ __all__ = [
     "VIIRS_500M_REFLECTANCE_BANDS",
     "VIIRS_ANALYSIS_BANDS",
     "VIIRS_SINUSOIDAL_CRS",
-    "create_viirs_ancillary_layout",
     "decode_viirs_qa_masks",
     "infer_viirs_lut_band_names_from_metadata",
     "infer_viirs_lut_band_names_from_path",
@@ -49,10 +39,4 @@ __all__ = [
     "reflectance_field_name",
     "resolve_viirs_inversion_bands",
     "resolve_viirs_inversion_bands_with_source",
-    "viirs_annual_ancillary_path",
-    "viirs_ancillary_path",
-    "viirs_ancillary_root",
-    "viirs_sensor_root",
-    "viirs_static_ancillary_path",
-    "viirs_tile_ancillary_root",
 ]

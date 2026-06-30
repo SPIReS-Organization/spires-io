@@ -14,14 +14,20 @@ import xarray as xr
 from spires_io.logging_utils import log_event
 from spires_io.base import SceneMetadata, collect_attrs, normalize_path, read_scaled_array
 from spires_io.viirs.bands import (
-    VIIRS_1KM_GEOMETRY_FIELDS,
-    VIIRS_1KM_QA_FIELDS,
     VIIRS_1KM_REFLECTANCE_BANDS,
     VIIRS_500M_REFLECTANCE_BANDS,
-    VIIRS_500M_SUPPORT_FIELDS,
     partition_viirs_band_names,
     reflectance_field_name,
     resolve_viirs_inversion_bands_with_source,
+)
+from spires_io.viirs.fields import (
+    VIIRS_1KM_GEOMETRY_FIELDS,
+    VIIRS_1KM_GRID,
+    VIIRS_1KM_GRID_NAME,
+    VIIRS_1KM_QA_FIELDS,
+    VIIRS_500M_GRID,
+    VIIRS_500M_GRID_NAME,
+    VIIRS_500M_SUPPORT_FIELDS,
 )
 from spires_io.viirs.geospatial import attach_spatial_ref, copy_spatial_metadata, parse_viirs_grid_metadata
 from spires_io.viirs.qa import decode_viirs_qa_masks, load_external_cloud_masks
@@ -31,11 +37,6 @@ VIIRS_FILENAME_RE = re.compile(
     r"^(?P<product>VNP09GA|VJ109GA|VJ209GA)\.A(?P<year>\d{4})(?P<doy>\d{3})\."
     r"(?P<tile>h\d{2}v\d{2})\.(?P<collection>\d{3})\.(?P<processing>\d+)\.h5$"
 )
-
-VIIRS_1KM_GRID = "HDFEOS/GRIDS/VIIRS_Grid_1km_2D"
-VIIRS_500M_GRID = "HDFEOS/GRIDS/VIIRS_Grid_500m_2D"
-VIIRS_1KM_GRID_NAME = "VIIRS_Grid_1km_2D"
-VIIRS_500M_GRID_NAME = "VIIRS_Grid_500m_2D"
 
 PLATFORM_BY_PRODUCT = {
     "VNP09GA": "snpp",

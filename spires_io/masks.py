@@ -6,9 +6,7 @@ import numpy as np
 import rioxarray  # noqa: F401  # register xarray .rio accessor
 import xarray as xr
 
-
-XARRAY_MASK_SUFFIXES = {".nc", ".cdf", ".netcdf"}
-RASTER_MASK_SUFFIXES = {".tif", ".tiff"}
+from spires_io.file_types import RASTER_SUFFIXES, XARRAY_SUFFIXES, ZARR_SUFFIXES
 
 
 def load_external_mask(
@@ -32,16 +30,16 @@ def load_external_mask(
 
 def _open_mask(path: Path, *, variable: str | None) -> xr.DataArray:
     suffix = path.suffix.lower()
-    if suffix == ".zarr":
+    if suffix in ZARR_SUFFIXES:
         dataset = xr.open_zarr(path)
         return _mask_variable_from_dataset(dataset, variable=variable)
-    if suffix in XARRAY_MASK_SUFFIXES:
+    if suffix in XARRAY_SUFFIXES:
         try:
             return xr.open_dataarray(path)
         except ValueError:
             dataset = xr.open_dataset(path)
             return _mask_variable_from_dataset(dataset, variable=variable)
-    if suffix in RASTER_MASK_SUFFIXES:
+    if suffix in RASTER_SUFFIXES:
         return rioxarray.open_rasterio(path, masked=True)
 
     raise ValueError(

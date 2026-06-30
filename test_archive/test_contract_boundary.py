@@ -4,8 +4,8 @@ from spires_contract.spectra import validate_solar_angles, validate_target_spect
 
 from spires_io.modis import prepare_modis_scene_for_inversion
 from spires_io.viirs import prepare_viirs_scene_for_inversion
-from test_modis_hdf import build_mock_modis_raw_dataset
-from test_viirs_hdf import build_mock_viirs_raw_dataset
+from test_modis_load_surface_reflectance import build_mock_modis_raw_dataset
+from test_viirs_load_surface_reflectance import build_mock_viirs_raw_dataset
 
 
 def _validate_scene_arrays(scene):

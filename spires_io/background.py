@@ -6,14 +6,14 @@ import numpy as np
 import rioxarray  # noqa: F401  # register xarray .rio accessor
 import xarray as xr
 
+from spires_io.file_types import RASTER_SUFFIXES, XARRAY_SUFFIXES, ZARR_SUFFIXES
+
 try:
     from spires_contract.spectra import validate_background_spectra
 except ImportError:  # pragma: no cover - contract package is optional at runtime.
     validate_background_spectra = None
 
 
-XARRAY_BACKGROUND_SUFFIXES = {".nc", ".cdf", ".netcdf"}
-RASTER_BACKGROUND_SUFFIXES = {".tif", ".tiff"}
 BACKGROUND_VARIABLE_CANDIDATES = (
     "background_reflectance",
     "r0_reflectance",
@@ -36,11 +36,11 @@ def load_background_reflectance(
     path = Path(path)
     suffix = path.suffix.lower()
 
-    if suffix == ".zarr":
+    if suffix in ZARR_SUFFIXES:
         background = _open_zarr_background(path)
-    elif suffix in XARRAY_BACKGROUND_SUFFIXES:
+    elif suffix in XARRAY_SUFFIXES:
         background = _open_netcdf_background(path)
-    elif suffix in RASTER_BACKGROUND_SUFFIXES:
+    elif suffix in RASTER_SUFFIXES:
         background = _open_raster_background(path)
     else:
         raise ValueError(

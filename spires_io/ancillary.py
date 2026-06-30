@@ -9,10 +9,9 @@ import rioxarray  # noqa: F401  # register xarray .rio accessor
 import xarray as xr
 
 import spires_io.constants as constants
+from spires_io.file_types import RASTER_SUFFIXES, XARRAY_SUFFIXES, ZARR_SUFFIXES
 
 
-XARRAY_ANCILLARY_SUFFIXES = {".nc", ".cdf", ".netcdf"}
-RASTER_ANCILLARY_SUFFIXES = {".tif", ".tiff"}
 SUPPORTED_ANCILLARY_NAMES = tuple(constants.STATIC_DATA)
 
 
@@ -81,14 +80,14 @@ def _open_ancillary(
     fallback_name: str,
 ) -> xr.DataArray:
     suffix = path.suffix.lower()
-    if suffix == ".zarr":
+    if suffix in ZARR_SUFFIXES:
         dataset = xr.open_zarr(path)
         return _ancillary_variable_from_dataset(
             dataset,
             variable=variable,
             fallback_name=fallback_name,
         )
-    if suffix in XARRAY_ANCILLARY_SUFFIXES:
+    if suffix in XARRAY_SUFFIXES:
         try:
             return xr.open_dataarray(path)
         except ValueError:
@@ -98,7 +97,7 @@ def _open_ancillary(
                 variable=variable,
                 fallback_name=fallback_name,
             )
-    if suffix in RASTER_ANCILLARY_SUFFIXES:
+    if suffix in RASTER_SUFFIXES:
         return rioxarray.open_rasterio(path, masked=True)
 
     raise ValueError(

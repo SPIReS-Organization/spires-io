@@ -2,7 +2,7 @@ import numpy as np
 import xarray as xr
 
 from spires_io.viirs import prepare_viirs_scene_for_inversion
-from test_viirs_hdf import build_mock_viirs_raw_dataset
+from test_viirs_load_surface_reflectance import build_mock_viirs_raw_dataset
 
 
 def test_prepare_viirs_scene_for_inversion_decodes_qa_cloud_shadow_and_snow_masks():
