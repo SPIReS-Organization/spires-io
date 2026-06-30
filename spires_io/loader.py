@@ -1,0 +1,184 @@
+"""Orchestration layer for preparing :class:`SpiresData` inputs."""
+
+from collections.abc import Callable, Mapping
+from pathlib import Path
+from typing import Any
+
+import xarray as xr
+
+from spires_io.api import prepare_scene_for_inversion
+from spires_io.ancillary import load_ancillary_layers
+from spires_io.background import load_background_reflectance
+from spires_io.configs import (
+    SceneManifestItem,
+    SpiresConfig,
+    SpiresRunConfig,
+)
+import spires_io.constants as constants
+from spires_io.masks import load_external_mask
+from spires_io.spires_data import SpiresData
+
+
+ScenePreparer = Callable[..., xr.Dataset]
+BackgroundLoader = Callable[..., xr.DataArray | None]
+AncillaryLoader = Callable[..., xr.Dataset | None]
+MaskLoader = Callable[..., xr.DataArray]
+
+
+class SpiresDataLoader:
+    """Prepare canonical scenes and wrap them as :class:`SpiresData`."""
+
+    def __init__(
+        self,
+        run_config: SpiresRunConfig | None = None,
+        *,
+        single_scene_config: SpiresConfig | None = None,
+        scene_preparer: ScenePreparer = prepare_scene_for_inversion,
+        background_loader: BackgroundLoader | None = None,
+        ancillary_loader: AncillaryLoader = load_ancillary_layers,
+        mask_loader: MaskLoader = load_external_mask,
+    ) -> None:
+        self.run_config = run_config
+        self.single_scene_config = single_scene_config
+        self._scene_preparer = scene_preparer
+        self._background_loader = background_loader or load_background_reflectance
+        self._ancillary_loader = ancillary_loader
+        self._mask_loader = mask_loader
+
+    @classmethod
+    def from_config(
+        cls,
+        config_file: str | Path,
+        *,
+        scene_preparer: ScenePreparer = prepare_scene_for_inversion,
+        background_loader: BackgroundLoader | None = None,
+        ancillary_loader: AncillaryLoader = load_ancillary_layers,
+        mask_loader: MaskLoader = load_external_mask,
+    ) -> "SpiresDataLoader":
+        """Create a loader for Brent-style single-scene JSON configs."""
+        return cls(
+            single_scene_config=SpiresConfig(config_file),
+            scene_preparer=scene_preparer,
+            background_loader=background_loader,
+            ancillary_loader=ancillary_loader,
+            mask_loader=mask_loader,
+        )
+
+    def load(self) -> SpiresData:
+        """Load the configured single scene."""
+        if self.single_scene_config is None:
+            raise ValueError("load() requires a single-scene config; use load_item() for manifests")
+
+        config = self.single_scene_config
+        scene = self._scene_preparer(
+            config.files.image_data,
+            sensor=config.sensor.name,
+            **_reader_kwargs_from_single_scene_config(config),
+        )
+        background = self._background_loader(config.files.background_image, target_scene=scene)
+        ancillary = self._ancillary_loader(
+            _single_scene_ancillary_sources(config),
+            target_scene=scene,
+        )
+        data = SpiresData.from_scene(
+            scene,
+            background=background,
+            ancillary=ancillary,
+            cluster_defaults=config.clustering.to_cluster_kwargs(),
+        )
+        if config.canopy.viewable_fraction:
+            data = data.assign_viewable_canopy_fraction(
+                average_vertical_crown_radius=config.canopy.average_vertical_crown_radius,
+                average_horizontal_crown_radius=config.canopy.average_horizontal_crown_radius,
+            )
+        return data
+
+    def load_item(self, item: SceneManifestItem | Mapping[str, Any]) -> SpiresData:
+        """Load one scene manifest item using this loader's run-wide policy."""
+        if self.run_config is None:
+            raise ValueError("load_item() requires a SpiresRunConfig")
+        if isinstance(item, Mapping):
+            item = SceneManifestItem.from_mapping(item, item_index=0)
+
+        scene = self._scene_preparer(
+            item.image_path,
+            sensor=self.run_config.sensor.name,
+            **_reader_kwargs_from_run_config(self.run_config),
+        )
+        background = self._background_loader(item.background_image, target_scene=scene)
+        ancillary = self._ancillary_loader(item.ancillary, target_scene=scene)
+        data = SpiresData.from_scene(
+            scene,
+            background=background,
+            ancillary=ancillary,
+            cluster_defaults=self.run_config.clustering.to_cluster_kwargs(),
+        )
+        if self.run_config.canopy.viewable_fraction:
+            data = data.assign_viewable_canopy_fraction(
+                average_vertical_crown_radius=(
+                    self.run_config.canopy.average_vertical_crown_radius
+                ),
+                average_horizontal_crown_radius=(
+                    self.run_config.canopy.average_horizontal_crown_radius
+                ),
+            )
+        return _assign_manifest_masks(data, item.masks, scene, self._mask_loader)
+
+
+def load_background_image(
+    path: str | Path,
+    *,
+    target_scene: xr.Dataset | None = None,
+) -> xr.DataArray:
+    """Compatibility alias for :func:`load_background_reflectance`."""
+    return load_background_reflectance(path, target_scene=target_scene)
+
+
+def _reader_kwargs_from_single_scene_config(config: SpiresConfig) -> dict[str, Any]:
+    kwargs: dict[str, Any] = config.reader.to_reader_kwargs()
+    kwargs["lut_file"] = config.files.lut
+    if config.sensor.selected_bands is not None:
+        kwargs["bands"] = list(config.sensor.selected_bands)
+    if config.files.cloud_mask is not None:
+        kwargs["cloud_mask_source"] = config.files.cloud_mask
+    return kwargs
+
+
+def _reader_kwargs_from_run_config(config: SpiresRunConfig) -> dict[str, Any]:
+    kwargs = config.reader.to_reader_kwargs()
+    if config.sensor.selected_bands is not None:
+        kwargs.setdefault("bands", list(config.sensor.selected_bands))
+    return kwargs
+
+
+def _single_scene_ancillary_sources(config: SpiresConfig) -> dict[str, str]:
+    return {
+        name: path
+        for name in constants.STATIC_DATA
+        if (path := getattr(config.files, name)) is not None
+    }
+
+
+def _assign_manifest_masks(
+    data: SpiresData,
+    masks: Mapping[str, Any],
+    scene: xr.Dataset,
+    mask_loader: MaskLoader,
+) -> SpiresData:
+    if not masks:
+        return data
+
+    loaded_masks = {}
+    for name, spec in masks.items():
+        if isinstance(spec, Mapping):
+            if "path" not in spec:
+                raise ValueError(f"manifest mask {name!r} must include a 'path'")
+            loaded_masks[name] = mask_loader(
+                spec["path"],
+                target_scene=scene,
+                variable=spec.get("variable") or spec.get("var"),
+            )
+        else:
+            loaded_masks[name] = mask_loader(spec, target_scene=scene)
+
+    return data.assign_masks(loaded_masks)

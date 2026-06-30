@@ -7,23 +7,23 @@ name = "spires-io"
 version = "0.1.0"
 description = "SPIReS I/O: MODIS/Sentinel-2/Landsat loaders, reprojection, and coordinate transforms"
 readme = { file = "README.md", content-type = "text/markdown" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Niklas Griessbaum" }]
 keywords = ["snow", "remote sensing", "xarray", "MODIS", "Sentinel-2", "Landsat"]
 dependencies = [
     "numpy",
     "xarray",
+    "h5py",
     "rasterio",
-    "joblib",
+    "affine",
     "netCDF4",
     "pyproj",
-    "scipy",
-    "pysolar",
+    "rioxarray",
 ]
 
 [project.optional-dependencies]
-test = ["pytest"]
+test = ["pytest", "spires-contract"]
 
 [project.urls]
 Homepage = "https://github.com/SPIReS-Organization/spires-io"
