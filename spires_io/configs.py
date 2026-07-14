@@ -19,6 +19,9 @@ class FilesConfig:
     background_image: str
     lut: str
     cloud_mask: Optional[str] = None
+    water_mask: Optional[str] = None
+    ice_mask: Optional[str] = None
+    playa_mask: Optional[str] = None
     dem: Optional[str] = None
     slope: Optional[str] = None
     aspect: Optional[str] = None
@@ -32,6 +35,9 @@ class FilesConfig:
         background_image: Optional[str] = None,
         snowfree_image: Optional[str] = None,
         cloud_mask: Optional[str] = None,
+        water_mask: Optional[str] = None,
+        ice_mask: Optional[str] = None,
+        playa_mask: Optional[str] = None,
         dem: Optional[str] = None,
         slope: Optional[str] = None,
         aspect: Optional[str] = None,
@@ -55,6 +61,9 @@ class FilesConfig:
         self.background_image = background_image
         self.lut = lut
         self.cloud_mask = cloud_mask
+        self.water_mask = water_mask
+        self.ice_mask = ice_mask
+        self.playa_mask = playa_mask
         self.dem = dem
         self.slope = slope
         self.aspect = aspect
@@ -154,24 +163,53 @@ class OptionsConfig:
         )
 
 
+@dataclass
+class MaskConfig:
+    cloud_mask_var: str = "mask_cloud"
+    cloud_shadow_mask_var: str = "mask_cloud_shadow"
+    water_mask_var: Optional[str] = None
+    ice_mask_var: Optional[str] = None
+    playa_mask_var: Optional[str] = None
+    mask_water_using_reflectance_qf: bool = True
+    mask_water_using_external_file: bool = True
+    mask_low_reflectance_for_inversion: bool = False
+    low_reflectance_threshold: float = 0.1
+    write_detailed_masks: bool = False
+
+    def __post_init__(self) -> None:
+        if self.low_reflectance_threshold < 0:
+            raise ValueError("low_reflectance_threshold must be >= 0")
+
+    def to_reader_kwargs(self) -> dict[str, Any]:
+        return {
+            "cloud_mask_var": self.cloud_mask_var,
+            "cloud_shadow_mask_var": self.cloud_shadow_mask_var,
+            "water_mask_var": self.water_mask_var,
+            "ice_mask_var": self.ice_mask_var,
+            "playa_mask_var": self.playa_mask_var,
+            "mask_water_using_reflectance_qf": self.mask_water_using_reflectance_qf,
+            "mask_water_using_external_file": self.mask_water_using_external_file,
+            "mask_low_reflectance_for_inversion": self.mask_low_reflectance_for_inversion,
+            "low_reflectance_threshold": self.low_reflectance_threshold,
+            "write_detailed_masks": self.write_detailed_masks,
+        }
+
+
 @dataclass(init=False)
 class ReaderConfig:
     max_sensor_zenith: float = 65.0
     max_solar_zenith: float = 85.0
-    cloud_mask_policy: str = "strict"
     extra: dict[str, Any] = field(default_factory=dict)
 
     def __init__(
         self,
         max_sensor_zenith: float = 65.0,
         max_solar_zenith: float = 85.0,
-        cloud_mask_policy: str = "strict",
         extra: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         self.max_sensor_zenith = max_sensor_zenith
         self.max_solar_zenith = max_solar_zenith
-        self.cloud_mask_policy = cloud_mask_policy
         self.extra = dict(extra or {})
         self.extra.update(kwargs)
         self.__post_init__()
@@ -185,23 +223,10 @@ class ReaderConfig:
             constants.MIN_ZENITH, min(self.max_solar_zenith, constants.MAX_ZENITH)
         )
 
-        valid_policies = {
-            "strict",
-            "snow_wins",
-            "ignore_cloud",
-            "ignore_cloud_and_shadow",
-        }
-        if self.cloud_mask_policy not in valid_policies:
-            raise ValueError(
-                "cloud_mask_policy must be one of "
-                f"{sorted(valid_policies)}; got {self.cloud_mask_policy!r}"
-            )
-
     def to_reader_kwargs(self) -> dict[str, Any]:
         kwargs = dict(self.extra)
         kwargs.setdefault("max_sensor_zenith", self.max_sensor_zenith)
         kwargs.setdefault("max_solar_zenith", self.max_solar_zenith)
-        kwargs.setdefault("cloud_mask_policy", self.cloud_mask_policy)
         return kwargs
 
 
@@ -336,6 +361,7 @@ class SpiresRunConfig:
 
     sensor: SensorConfig
     reader: ReaderConfig = field(default_factory=ReaderConfig)
+    mask: MaskConfig = field(default_factory=MaskConfig)
     options: OptionsConfig = field(default_factory=OptionsConfig)
     inversion: InversionConfig = field(default_factory=InversionConfig)
     clustering: ClusterConfig = field(default_factory=ClusterConfig)
@@ -358,9 +384,11 @@ class SpiresRunConfig:
             raise ValueError("run config is missing required key 'sensor'")
         _reject_legacy_top_level_sections(data)
         _reject_moved_options(_section_mapping(data, "options"))
+        _reject_moved_reader_options(_section_mapping(data, "reader"))
 
         sensor = _parse_sensor_config(data["sensor"])
         reader = ReaderConfig(**_section_mapping(data, "reader"))
+        mask = MaskConfig(**_section_mapping(data, "mask"))
         options = OptionsConfig(**_section_mapping(data, "options"))
         inversion = InversionConfig(**_section_mapping(data, "inversion"))
         clustering = ClusterConfig(**_section_mapping(data, "clustering"))
@@ -370,6 +398,7 @@ class SpiresRunConfig:
         known_keys = {
             "sensor",
             "reader",
+            "mask",
             "options",
             "inversion",
             "clustering",
@@ -384,6 +413,7 @@ class SpiresRunConfig:
         return cls(
             sensor=sensor,
             reader=reader,
+            mask=mask,
             options=options,
             inversion=inversion,
             clustering=clustering,
@@ -527,12 +557,31 @@ MOVED_OPTION_KEYS = {
     "average_horizontal_crown_radius": "canopy.average_horizontal_crown_radius",
     "max_sensor_zenith": "reader.max_sensor_zenith",
     "max_solar_zenith": "reader.max_solar_zenith",
+    "mask_water_using_reflectance_qf": "mask.mask_water_using_reflectance_qf",
+    "mask_water_using_external_file": "mask.mask_water_using_external_file",
+    "mask_low_reflectance_for_inversion": "mask.mask_low_reflectance_for_inversion",
+    "low_reflectance_threshold": "mask.low_reflectance_threshold",
+    "write_detailed_masks": "mask.write_detailed_masks",
+}
+
+
+MOVED_READER_KEYS = {
+    "cloud_mask_var": "mask.cloud_mask_var",
+    "cloud_shadow_mask_var": "mask.cloud_shadow_mask_var",
+    "water_mask_var": "mask.water_mask_var",
+    "ice_mask_var": "mask.ice_mask_var",
+    "playa_mask_var": "mask.playa_mask_var",
+    "mask_water_using_reflectance_qf": "mask.mask_water_using_reflectance_qf",
+    "mask_water_using_external_file": "mask.mask_water_using_external_file",
+    "mask_low_reflectance_for_inversion": "mask.mask_low_reflectance_for_inversion",
+    "low_reflectance_threshold": "mask.low_reflectance_threshold",
+    "write_detailed_masks": "mask.write_detailed_masks",
 }
 
 
 LEGACY_TOP_LEVEL_SECTIONS = {
     "reader_options": "reader",
-    "mask_policy": "reader",
+    "mask_policy": "mask",
     "resampling": "spatial",
 }
 
@@ -544,6 +593,15 @@ def _reject_moved_options(options: Mapping[str, Any]) -> None:
             f"options.{key} -> {MOVED_OPTION_KEYS[key]}" for key in moved
         )
         raise ValueError(f"moved config option(s): {destinations}")
+
+
+def _reject_moved_reader_options(reader: Mapping[str, Any]) -> None:
+    moved = sorted(set(reader) & set(MOVED_READER_KEYS))
+    if moved:
+        destinations = ", ".join(
+            f"reader.{key} -> {MOVED_READER_KEYS[key]}" for key in moved
+        )
+        raise ValueError(f"moved reader option(s): {destinations}")
 
 
 def _reject_legacy_top_level_sections(data: Mapping[str, Any]) -> None:
@@ -565,10 +623,12 @@ class SpiresConfig:
 
         _reject_legacy_top_level_sections(data)
         _reject_moved_options(_section_mapping(data, "options"))
+        _reject_moved_reader_options(_section_mapping(data, "reader"))
         self.files = FilesConfig(**data["files"])
         self.sensor = SensorConfig(**data["sensor"])
         self.option = OptionsConfig(**_section_mapping(data, "options"))
         self.reader = ReaderConfig(**_section_mapping(data, "reader"))
+        self.mask = MaskConfig(**_section_mapping(data, "mask"))
         self.spatial = SpatialConfig(**_section_mapping(data, "spatial"))
         self.canopy = CanopyConfig(**_section_mapping(data, "canopy"))
         self.clustering = ClusterConfig(**_section_mapping(data, "clustering"))

@@ -136,19 +136,32 @@ def load_background_image(
 
 def _reader_kwargs_from_single_scene_config(config: SpiresConfig) -> dict[str, Any]:
     kwargs: dict[str, Any] = config.reader.to_reader_kwargs()
+    _setdefault_mask_kwargs(kwargs, config.mask)
     kwargs["lut_file"] = config.files.lut
     if config.sensor.selected_bands is not None:
         kwargs["bands"] = list(config.sensor.selected_bands)
     if config.files.cloud_mask is not None:
         kwargs["cloud_mask_source"] = config.files.cloud_mask
+    if config.files.water_mask is not None:
+        kwargs["water_mask_source"] = config.files.water_mask
+    if config.files.ice_mask is not None:
+        kwargs["ice_mask_source"] = config.files.ice_mask
+    if config.files.playa_mask is not None:
+        kwargs["playa_mask_source"] = config.files.playa_mask
     return kwargs
 
 
 def _reader_kwargs_from_run_config(config: SpiresRunConfig) -> dict[str, Any]:
     kwargs = config.reader.to_reader_kwargs()
+    _setdefault_mask_kwargs(kwargs, config.mask)
     if config.sensor.selected_bands is not None:
         kwargs.setdefault("bands", list(config.sensor.selected_bands))
     return kwargs
+
+
+def _setdefault_mask_kwargs(kwargs: dict[str, Any], mask: Any) -> None:
+    for key, value in mask.to_reader_kwargs().items():
+        kwargs.setdefault(key, value)
 
 
 def _single_scene_ancillary_sources(config: SpiresConfig) -> dict[str, str]:

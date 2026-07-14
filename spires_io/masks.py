@@ -28,6 +28,49 @@ def load_external_mask(
     return mask
 
 
+def load_external_mask_on_grid(
+    source: str | Path | xr.Dataset | xr.DataArray,
+    *,
+    target_x: xr.DataArray,
+    target_y: xr.DataArray,
+    variable: str | None = None,
+    name: str = "external_mask",
+) -> xr.DataArray:
+    """Load an external mask and align it to target x/y grid coordinates."""
+    close_source = None
+    if isinstance(source, xr.DataArray):
+        mask = source
+    elif isinstance(source, xr.Dataset):
+        mask = _mask_variable_from_dataset(source, variable=variable)
+    else:
+        mask = _open_mask(Path(source), variable=variable)
+        close_source = mask
+
+    try:
+        mask = _normalize_mask_dims(mask)
+        target = xr.DataArray(
+            np.zeros((target_y.size, target_x.size), dtype=bool),
+            dims=("y", "x"),
+            coords={"y": target_y.values, "x": target_x.values},
+        )
+        if _coords_match(mask, target, ("y", "x")):
+            aligned = mask
+        elif mask.sizes["y"] == target.sizes["y"] and mask.sizes["x"] == target.sizes["x"]:
+            aligned = mask.assign_coords(y=target_y.values, x=target_x.values)
+        else:
+            reprojected = _try_reproject_match(mask, target)
+            if reprojected is None or not _coords_match(reprojected, target, ("y", "x")):
+                raise ValueError("external mask cannot be aligned to the target grid")
+            aligned = reprojected
+
+        aligned = aligned.astype(bool).load()
+        aligned.name = name
+        return aligned
+    finally:
+        if close_source is not None:
+            close_source.close()
+
+
 def _open_mask(path: Path, *, variable: str | None) -> xr.DataArray:
     suffix = path.suffix.lower()
     if suffix in ZARR_SUFFIXES:

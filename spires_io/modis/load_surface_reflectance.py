@@ -13,6 +13,7 @@ import xarray as xr
 
 from spires_io.logging_utils import log_event
 from spires_io.base import SceneMetadata, collect_attrs, normalize_path, read_scaled_array
+from spires_io.masks import load_external_mask_on_grid
 from spires_io.modis.bands import MODIS_PRODUCT_TO_PLATFORM, resolve_modis_inversion_bands
 from spires_io.modis.fields import (
     MODIS_1KM_GEOMETRY_FIELDS,
@@ -151,13 +152,18 @@ def _build_component_masks(
     mask_cloud: xr.DataArray,
     mask_cloud_shadow: xr.DataArray,
     mask_snow: xr.DataArray,
+    mask_water_external: xr.DataArray | None = None,
+    mask_ice_external: xr.DataArray | None = None,
+    mask_playa_external: xr.DataArray | None = None,
     *,
     water_mask_values: tuple[int, ...],
+    mask_water_using_reflectance_qf: bool,
+    mask_low_reflectance_for_inversion: bool,
+    low_reflectance_threshold: float,
     max_sensor_zenith: float,
     max_solar_zenith: float,
     min_obs_1km: int,
     min_obs_500m: int,
-    cloud_mask_policy: str,
 ) -> xr.Dataset:
     finite_reflectance = np.isfinite(reflectance)
     mask_invalid_reflectance = ~finite_reflectance.all(dim="band")
@@ -169,9 +175,33 @@ def _build_component_masks(
         | (solar_zenith > max_solar_zenith)
     )
 
-    mask_water = xr.zeros_like(land_water_class, dtype=bool)
-    for value in water_mask_values:
-        mask_water = mask_water | (land_water_class == value)
+    false_mask = xr.zeros_like(land_water_class, dtype=bool)
+
+    mask_water_reflectance_qf = false_mask.copy()
+    if mask_water_using_reflectance_qf:
+        for value in water_mask_values:
+            mask_water_reflectance_qf = mask_water_reflectance_qf | (land_water_class == value)
+    mask_water_external = (
+        false_mask.copy()
+        if mask_water_external is None
+        else mask_water_external.astype(bool)
+    )
+    mask_ice_external = (
+        false_mask.copy()
+        if mask_ice_external is None
+        else mask_ice_external.astype(bool)
+    )
+    mask_playa_external = (
+        false_mask.copy()
+        if mask_playa_external is None
+        else mask_playa_external.astype(bool)
+    )
+    mask_water = mask_water_reflectance_qf | mask_water_external
+
+    if mask_low_reflectance_for_inversion:
+        mask_low_reflectance = (reflectance < low_reflectance_threshold).all(dim="band")
+    else:
+        mask_low_reflectance = false_mask.copy()
 
     mask_low_observation_support = (
         (num_observations_1km < min_obs_1km)
@@ -180,37 +210,17 @@ def _build_component_masks(
 
     mask_bad_modland_qa = modland_qa >= 2
 
-    mask_shape = land_water_class.shape
-    mask_dims = land_water_class.dims
-    mask_coords = {dim: land_water_class.coords[dim].values for dim in mask_dims}
-    false_mask = xr.DataArray(np.zeros(mask_shape, dtype=bool), dims=mask_dims, coords=mask_coords)
-
-    if cloud_mask_policy == "strict":
-        mask_cloud_for_inversion = mask_cloud
-        mask_cloud_shadow_for_inversion = mask_cloud_shadow
-    elif cloud_mask_policy == "snow_wins":
-        mask_cloud_for_inversion = mask_cloud & (~mask_snow)
-        mask_cloud_shadow_for_inversion = mask_cloud_shadow & (~mask_snow)
-    elif cloud_mask_policy == "ignore_cloud":
-        mask_cloud_for_inversion = false_mask.copy()
-        mask_cloud_shadow_for_inversion = mask_cloud_shadow
-    elif cloud_mask_policy == "ignore_cloud_and_shadow":
-        mask_cloud_for_inversion = false_mask.copy()
-        mask_cloud_shadow_for_inversion = false_mask.copy()
-    else:
-        raise ValueError(
-            "cloud_mask_policy must be one of "
-            "'strict', 'snow_wins', 'ignore_cloud', or 'ignore_cloud_and_shadow'"
-        )
-
     valid_inversion_mask = ~(
         mask_invalid_reflectance
         | mask_bad_geometry
         | mask_water
         | mask_low_observation_support
         | mask_bad_modland_qa
-        | mask_cloud_for_inversion
-        | mask_cloud_shadow_for_inversion
+        | mask_cloud
+        | mask_cloud_shadow
+        | mask_ice_external
+        | mask_playa_external
+        | mask_low_reflectance
     )
     valid_r0_mask = ~(
         mask_invalid_reflectance
@@ -219,6 +229,8 @@ def _build_component_masks(
         | mask_bad_modland_qa
         | mask_cloud
         | mask_cloud_shadow
+        | mask_ice_external
+        | mask_playa_external
         | mask_snow
     )
 
@@ -226,14 +238,17 @@ def _build_component_masks(
         data_vars={
             "mask_invalid_reflectance": mask_invalid_reflectance.astype(bool),
             "mask_bad_geometry": mask_bad_geometry.astype(bool),
+            "mask_water_reflectance_qf": mask_water_reflectance_qf.astype(bool),
+            "mask_water_external": mask_water_external.astype(bool),
             "mask_water": mask_water.astype(bool),
             "mask_low_observation_support": mask_low_observation_support.astype(bool),
             "mask_bad_modland_qa": mask_bad_modland_qa.astype(bool),
             "mask_cloud": mask_cloud.astype(bool),
             "mask_cloud_shadow": mask_cloud_shadow.astype(bool),
             "mask_snow": mask_snow.astype(bool),
-            "mask_cloud_for_inversion": mask_cloud_for_inversion.astype(bool),
-            "mask_cloud_shadow_for_inversion": mask_cloud_shadow_for_inversion.astype(bool),
+            "mask_ice_external": mask_ice_external.astype(bool),
+            "mask_playa_external": mask_playa_external.astype(bool),
+            "mask_low_reflectance": mask_low_reflectance.astype(bool),
             "valid_inversion_mask": valid_inversion_mask.astype(bool),
             "valid_r0_mask": valid_r0_mask.astype(bool),
         }
@@ -355,17 +370,29 @@ def prepare_modis_scene_for_inversion(
     cloud_mask_source: str | Path | xr.Dataset | xr.DataArray | None = None,
     cloud_mask_var: str = "mask_cloud",
     cloud_shadow_mask_var: str = "mask_cloud_shadow",
+    water_mask_source: str | Path | xr.Dataset | xr.DataArray | None = None,
+    water_mask_var: str | None = None,
+    ice_mask_source: str | Path | xr.Dataset | xr.DataArray | None = None,
+    ice_mask_var: str | None = None,
+    playa_mask_source: str | Path | xr.Dataset | xr.DataArray | None = None,
+    playa_mask_var: str | None = None,
     keep_intermediate_reflectance: bool = False,
     max_sensor_zenith: float = 65.0,
     max_solar_zenith: float = 85.0,
     min_obs_1km: int = 1,
     min_obs_500m: int = 1,
     water_mask_values: tuple[int, ...] = (0, 2, 3, 4, 5, 6, 7),
-    cloud_mask_policy: str = "strict",
+    mask_water_using_reflectance_qf: bool = True,
+    mask_water_using_external_file: bool = True,
+    mask_low_reflectance_for_inversion: bool = False,
+    low_reflectance_threshold: float = 0.1,
+    write_detailed_masks: bool = False,
 ) -> xr.Dataset:
     """Prepare a MODIS scene on a single 500 m analysis grid for inversion."""
     start_time = perf_counter()
     logger = logger or LOGGER
+    if low_reflectance_threshold < 0:
+        raise ValueError("low_reflectance_threshold must be >= 0")
 
     if isinstance(source, xr.Dataset):
         raw = source
@@ -422,10 +449,37 @@ def prepare_modis_scene_for_inversion(
             cloud_shadow_mask_var=cloud_shadow_mask_var,
         )
         prepared.update(external_mask_ds)
-        mask_cloud = prepared["mask_cloud_external"]
-        mask_cloud_shadow = prepared["mask_cloud_shadow_external"]
+        mask_cloud = mask_cloud | prepared["mask_cloud_external"]
+        mask_cloud_shadow = mask_cloud_shadow | prepared["mask_cloud_shadow_external"]
 
     mask_snow = prepared["mask_snow_qa"]
+    mask_water_external = None
+    if mask_water_using_external_file and water_mask_source is not None:
+        mask_water_external = load_external_mask_on_grid(
+            water_mask_source,
+            target_x=x,
+            target_y=y,
+            variable=water_mask_var,
+            name="mask_water_external",
+        )
+    mask_ice_external = None
+    if ice_mask_source is not None:
+        mask_ice_external = load_external_mask_on_grid(
+            ice_mask_source,
+            target_x=x,
+            target_y=y,
+            variable=ice_mask_var,
+            name="mask_ice_external",
+        )
+    mask_playa_external = None
+    if playa_mask_source is not None:
+        mask_playa_external = load_external_mask_on_grid(
+            playa_mask_source,
+            target_x=x,
+            target_y=y,
+            variable=playa_mask_var,
+            name="mask_playa_external",
+        )
 
     mask_ds = _build_component_masks(
         prepared["reflectance"],
@@ -438,15 +492,20 @@ def prepare_modis_scene_for_inversion(
         mask_cloud,
         mask_cloud_shadow,
         mask_snow,
+        mask_water_external,
+        mask_ice_external,
+        mask_playa_external,
         water_mask_values=water_mask_values,
+        mask_water_using_reflectance_qf=mask_water_using_reflectance_qf,
+        mask_low_reflectance_for_inversion=mask_low_reflectance_for_inversion,
+        low_reflectance_threshold=low_reflectance_threshold,
         max_sensor_zenith=max_sensor_zenith,
         max_solar_zenith=max_solar_zenith,
         min_obs_1km=min_obs_1km,
         min_obs_500m=min_obs_500m,
-        cloud_mask_policy=cloud_mask_policy,
     )
     prepared.update(mask_ds)
-    prepared.attrs["cloud_mask_policy"] = cloud_mask_policy
+    prepared = _filter_mask_outputs(prepared, write_detailed_masks=write_detailed_masks)
 
     prepared["reflectance"].attrs["selected_bands"] = selected_bands
     if lut_file is not None:
@@ -468,10 +527,33 @@ def prepare_modis_scene_for_inversion(
         input_path=str(source) if not isinstance(source, xr.Dataset) else None,
         lut_file=str(lut_file) if lut_file is not None else None,
         selected_bands=selected_bands,
-        cloud_mask_policy=cloud_mask_policy,
         cloud_mask_source=str(cloud_mask_source) if isinstance(cloud_mask_source, (str, Path)) else type(cloud_mask_source).__name__ if cloud_mask_source is not None else None,
+        water_mask_source=str(water_mask_source) if isinstance(water_mask_source, (str, Path)) else type(water_mask_source).__name__ if water_mask_source is not None else None,
+        ice_mask_source=str(ice_mask_source) if isinstance(ice_mask_source, (str, Path)) else type(ice_mask_source).__name__ if ice_mask_source is not None else None,
+        playa_mask_source=str(playa_mask_source) if isinstance(playa_mask_source, (str, Path)) else type(playa_mask_source).__name__ if playa_mask_source is not None else None,
         keep_intermediate_reflectance=keep_intermediate_reflectance,
+        mask_water_using_reflectance_qf=mask_water_using_reflectance_qf,
+        mask_water_using_external_file=mask_water_using_external_file,
+        mask_low_reflectance_for_inversion=mask_low_reflectance_for_inversion,
+        low_reflectance_threshold=low_reflectance_threshold,
+        write_detailed_masks=write_detailed_masks,
         output_shape=list(prepared["reflectance"].shape),
         elapsed_seconds=round(perf_counter() - start_time, 6),
     )
     return prepared
+
+
+def _filter_mask_outputs(
+    prepared: xr.Dataset,
+    *,
+    write_detailed_masks: bool,
+) -> xr.Dataset:
+    if write_detailed_masks:
+        return prepared
+
+    mask_vars = [
+        name
+        for name in prepared.data_vars
+        if name.startswith("mask_") or name == "valid_r0_mask"
+    ]
+    return prepared.drop_vars(mask_vars)

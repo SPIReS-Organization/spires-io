@@ -12,13 +12,13 @@ def _write_json(tmp_path, name, data):
     return path
 
 
-def test_spires_run_config_parses_global_policy(tmp_path):
+def test_spires_run_config_parses_global_settings(tmp_path):
     config_path = _write_json(
         tmp_path,
         "run_config.json",
         {
             "sensor": {"name": "modis", "selected_bands": ["1", "2"]},
-            "reader": {"lut_file": "lut.mat", "cloud_mask_policy": "snow_wins"},
+            "reader": {"lut_file": "lut.mat"},
             "inversion": {"max_eval": 50},
             "clustering": {
                 "enabled": True,
@@ -39,7 +39,6 @@ def test_spires_run_config_parses_global_policy(tmp_path):
     assert config.sensor.selected_bands == ["1", "2"]
     assert list(config.sensor.band_names) == ["1", "2"]
     assert config.reader.extra == {"lut_file": "lut.mat"}
-    assert config.reader.cloud_mask_policy == "snow_wins"
     assert config.inversion.max_eval == 50
     assert config.clustering.enabled
     assert config.clustering.features == ("reflectance", "solar_zenith")

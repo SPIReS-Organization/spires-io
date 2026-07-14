@@ -13,7 +13,7 @@ from spires_io.api import (
 )
 from spires_io.ancillary import load_ancillary_layer, load_ancillary_layers
 from spires_io.background import load_background_reflectance
-from spires_io.configs import SceneManifest, SceneManifestItem, SpiresRunConfig
+from spires_io.configs import MaskConfig, SceneManifest, SceneManifestItem, SpiresRunConfig
 from spires_io.loader import SpiresDataLoader
 from spires_io.masks import load_external_mask
 from spires_io.spires_data import SpiresData
@@ -23,6 +23,7 @@ __all__ = [
     "__version__",
     "SceneManifest",
     "SceneManifestItem",
+    "MaskConfig",
     "SpiresData",
     "SpiresDataLoader",
     "SpiresDataWriter",

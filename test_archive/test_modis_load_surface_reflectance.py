@@ -126,33 +126,6 @@ def test_prepare_modis_scene_for_inversion_promotes_1km_fields_to_500m():
     assert "valid_r0_mask" in ds
 
 
-def test_prepare_modis_scene_for_inversion_can_ignore_cloud_mask_for_inversion():
-    raw = build_mock_modis_raw_dataset()
-    cloud_mask = xr.DataArray(
-        np.ones((2, 2), dtype=bool),
-        dims=("y", "x"),
-        coords={"y": raw["y_500m"].values, "x": raw["x_500m"].values},
-    )
-
-    strict = prepare_modis_scene_for_inversion(
-        raw,
-        cloud_mask_source=cloud_mask,
-        cloud_mask_policy="strict",
-    )
-    relaxed = prepare_modis_scene_for_inversion(
-        raw,
-        cloud_mask_source=cloud_mask,
-        cloud_mask_policy="ignore_cloud",
-    )
-
-    assert not bool(strict["valid_inversion_mask"].any())
-    assert bool(relaxed["mask_cloud"].all())
-    assert not bool(relaxed["mask_cloud_for_inversion"].any())
-    assert bool(relaxed["valid_inversion_mask"].all())
-    assert not bool(relaxed["valid_r0_mask"].any())
-    assert relaxed.attrs["cloud_mask_policy"] == "ignore_cloud"
-
-
 def test_prepare_modis_scene_for_inversion_keeps_water_valid_for_r0():
     raw = build_mock_modis_raw_dataset()
     raw["state_1km"] = xr.zeros_like(raw["state_1km"])

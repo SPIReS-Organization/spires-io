@@ -93,7 +93,7 @@ def _write_single_scene_config(tmp_path):
     return config_path
 
 
-def test_loader_from_config_loads_single_scene_with_reader_policy(tmp_path):
+def test_loader_from_config_loads_single_scene_with_reader_settings(tmp_path):
     scene = _scene()
     background = _background(scene)
     calls = []
@@ -124,7 +124,6 @@ def test_loader_from_config_loads_single_scene_with_reader_policy(tmp_path):
                 "lut_file": "lut.mat",
                 "max_sensor_zenith": 50.0,
                 "max_solar_zenith": 70.0,
-                "cloud_mask_policy": "strict",
                 "bands": ["1", "2"],
                 "cloud_mask_source": "cloud.nc",
             },
@@ -262,7 +261,6 @@ def test_loader_load_item_uses_run_config_and_manifest_item():
             "reader": {
                 "lut_file": "lut.mat",
                 "keep_intermediate_reflectance": True,
-                "cloud_mask_policy": "ignore_cloud",
             },
         }
     )
@@ -290,7 +288,6 @@ def test_loader_load_item_uses_run_config_and_manifest_item():
                 "keep_intermediate_reflectance": True,
                 "max_sensor_zenith": 65.0,
                 "max_solar_zenith": 85.0,
-                "cloud_mask_policy": "ignore_cloud",
                 "bands": ["I1", "M4"],
             },
         ),
@@ -328,7 +325,6 @@ def test_loader_load_item_accepts_mapping_item():
             {
                 "max_sensor_zenith": 65.0,
                 "max_solar_zenith": 85.0,
-                "cloud_mask_policy": "strict",
             },
         )
     ]
