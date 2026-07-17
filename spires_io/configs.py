@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, List
 
 import spires_io.constants as constants
+from spires_io.clustering import CLUSTER_FEATURE_SPECS, SUPPORTED_CLUSTER_FEATURES
 from spires_io.file_types import ALL_SUPPORTED_FILE_SUFFIXES
 from spires_io.registry import list_supported_sensors, normalize_sensor_name
 from spires_io.sensor_metadata import get_sensor_metadata
@@ -282,15 +283,21 @@ class ClusterConfig:
     features: Sequence[str] = ("reflectance", "background", "solar_zenith")
     label_name: str = "cluster_label"
     representative_method: str = "cluster_mean"
-    reflectance_tol: float | list[float] = 0.02
-    background_tol: float | list[float] = 0.02
-    solar_zenith_tol: float | list[float] = 2.0
-    cosine_illumination_tol: float | list[float] = 0.02
+    reflectance_tol: float | list[float] = CLUSTER_FEATURE_SPECS[
+        "reflectance"
+    ].default_tolerance
+    background_tol: float | list[float] = CLUSTER_FEATURE_SPECS[
+        "background"
+    ].default_tolerance
+    solar_zenith_tol: float | list[float] = CLUSTER_FEATURE_SPECS[
+        "solar_zenith"
+    ].default_tolerance
+    cosine_illumination_tol: float | list[float] = CLUSTER_FEATURE_SPECS[
+        "cosine_illumination"
+    ].default_tolerance
     ignore_cloudmask: bool = False
 
     def __post_init__(self) -> None:
-        from spires_io.clustering import SUPPORTED_CLUSTER_FEATURES
-
         if self.features is None:
             raise ValueError("clustering.features must list at least one feature")
         normalized_features = tuple(str(feature).lower() for feature in self.features)
@@ -320,24 +327,23 @@ class ClusterConfig:
             )
         self.representative_method = method
 
-        for name in (
-            "reflectance_tol",
-            "background_tol",
-            "solar_zenith_tol",
-            "cosine_illumination_tol",
-        ):
+        for feature in CLUSTER_FEATURE_SPECS:
+            name = f"{feature}_tol"
             _validate_positive_tolerance(getattr(self, name), f"clustering.{name}")
 
     def to_cluster_kwargs(self) -> dict[str, Any]:
-        return {
+        kwargs = {
             "features": self.features,
             "label_name": self.label_name,
             "representative_method": self.representative_method,
-            "reflectance_tol": self.reflectance_tol,
-            "background_tol": self.background_tol,
-            "solar_zenith_tol": self.solar_zenith_tol,
-            "cosine_illumination_tol": self.cosine_illumination_tol,
         }
+        kwargs.update(
+            {
+                f"{feature}_tol": getattr(self, f"{feature}_tol")
+                for feature in CLUSTER_FEATURE_SPECS
+            }
+        )
+        return kwargs
 
 
 def _validate_positive_tolerance(value: float | list[float], name: str) -> None:

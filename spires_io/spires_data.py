@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import xarray as xr
 
+from spires_io.clustering import CLUSTER_FEATURE_SPECS
+
 if TYPE_CHECKING:
     from spires_io.clustering import ClusteredSpectra, Tolerance
 
@@ -164,15 +166,35 @@ class SpiresData:
             else _validate_valid_mask_override(self.scene, valid_mask)
         )
 
-        clustered = cluster_spectra_block(
-            reflectance=self.target_spectra.values,
-            background=None if self.background is None else self.background.values,
-            solar_zenith=self.solar_zenith.values,
-            cosine_illumination=(
+        feature_values = {
+            "reflectance": self.target_spectra.values,
+            "background": (
+                None if self.background is None else self.background.values
+            ),
+            "solar_zenith": self.solar_zenith.values,
+            "cosine_illumination": (
                 None
                 if "cosine_illumination" not in self.scene
                 else self.scene["cosine_illumination"].values
             ),
+        }
+        tolerance_overrides = {
+            "reflectance": reflectance_tol,
+            "background": background_tol,
+            "solar_zenith": solar_zenith_tol,
+            "cosine_illumination": cosine_illumination_tol,
+        }
+        tolerance_kwargs = {
+            f"{feature}_tol": (
+                tolerance_overrides[feature]
+                if tolerance_overrides[feature] is not None
+                else defaults[f"{feature}_tol"]
+            )
+            for feature in CLUSTER_FEATURE_SPECS
+        }
+
+        clustered = cluster_spectra_block(
+            **feature_values,
             features=features if features is not None else defaults["features"],
             valid_mask=cluster_valid_mask.values,
             representative_method=(
@@ -180,26 +202,7 @@ class SpiresData:
                 if representative_method is not None
                 else defaults["representative_method"]
             ),
-            reflectance_tol=(
-                reflectance_tol
-                if reflectance_tol is not None
-                else defaults["reflectance_tol"]
-            ),
-            background_tol=(
-                background_tol
-                if background_tol is not None
-                else defaults["background_tol"]
-            ),
-            solar_zenith_tol=(
-                solar_zenith_tol
-                if solar_zenith_tol is not None
-                else defaults["solar_zenith_tol"]
-            ),
-            cosine_illumination_tol=(
-                cosine_illumination_tol
-                if cosine_illumination_tol is not None
-                else defaults["cosine_illumination_tol"]
-            ),
+            **tolerance_kwargs,
         )
         scene = _assign_cluster_outputs(
             self.scene,
@@ -215,17 +218,20 @@ class SpiresData:
 
 
 def _cluster_defaults(defaults: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+    normalized = {
         "features": defaults.get("features"),
         "label_name": defaults.get("label_name", "cluster_label"),
         "representative_method": defaults.get("representative_method", "cluster_mean"),
-        "reflectance_tol": defaults.get("reflectance_tol", 0.02),
-        "background_tol": defaults.get("background_tol", 0.02),
-        "solar_zenith_tol": defaults.get("solar_zenith_tol", 2.0),
-        "cosine_illumination_tol": defaults.get(
-            "cosine_illumination_tol", 0.02
-        ),
     }
+    normalized.update(
+        {
+            f"{feature}_tol": defaults.get(
+                f"{feature}_tol", spec.default_tolerance
+            )
+            for feature, spec in CLUSTER_FEATURE_SPECS.items()
+        }
+    )
+    return normalized
 
 
 def _validate_scene(scene: xr.Dataset) -> None:
@@ -303,47 +309,27 @@ def _assign_cluster_outputs(
         attrs=_cluster_attrs(clustered),
     )
 
-    if clustered.representative_reflectance is not None:
-        updated["cluster_representative_reflectance"] = xr.DataArray(
-            clustered.representative_reflectance,
-            dims=("cluster", "band"),
-            coords={
-                "cluster": cluster_coord,
-                "band": updated.coords["band"].values,
-            },
-            name="cluster_representative_reflectance",
-            attrs=_cluster_attrs(clustered),
-        )
-    if clustered.representative_background is not None:
-        updated["cluster_representative_background"] = xr.DataArray(
-            clustered.representative_background,
-            dims=("cluster", "band"),
-            coords={
-                "cluster": cluster_coord,
-                "band": updated.coords["band"].values,
-            },
-            name="cluster_representative_background",
-            attrs=_cluster_attrs(clustered),
-        )
-    if clustered.representative_solar_zenith is not None:
-        updated["cluster_representative_solar_zenith"] = xr.DataArray(
-            clustered.representative_solar_zenith,
-            dims=("cluster",),
-            coords={"cluster": cluster_coord},
-            name="cluster_representative_solar_zenith",
-            attrs=_cluster_attrs(clustered),
-        )
-    if clustered.representative_cosine_illumination is not None:
-        updated["cluster_representative_cosine_illumination"] = xr.DataArray(
-            clustered.representative_cosine_illumination,
-            dims=("cluster",),
-            coords={"cluster": cluster_coord},
-            name="cluster_representative_cosine_illumination",
-            attrs={
-                **_cluster_attrs(clustered),
-                "long_name": "Representative cosine of local solar incidence",
-                "units": "1",
-            },
+    cluster_attrs = _cluster_attrs(clustered)
+    for feature, spec in CLUSTER_FEATURE_SPECS.items():
+        representative = getattr(clustered, f"representative_{feature}")
+        if representative is None:
+            continue
+        variable_name = f"cluster_representative_{feature}"
+        spectral = spec.kind == "spectral"
+        coords = {"cluster": cluster_coord}
+        if spectral:
+            coords["band"] = updated.coords["band"].values
+        attrs = dict(cluster_attrs)
+        if spec.representative_long_name is not None:
+            attrs["long_name"] = spec.representative_long_name
+        if spec.units is not None:
+            attrs["units"] = spec.units
+        updated[variable_name] = xr.DataArray(
+            representative,
+            dims=("cluster", "band") if spectral else ("cluster",),
+            coords=coords,
+            name=variable_name,
+            attrs=attrs,
         )
 
     return updated
@@ -354,12 +340,8 @@ def _cluster_attrs(clustered: "ClusteredSpectra") -> dict[str, str]:
         "features": ",".join(clustered.features),
         "representative_method": clustered.representative_method,
     }
-    for name in (
-        "reflectance_tol",
-        "background_tol",
-        "solar_zenith_tol",
-        "cosine_illumination_tol",
-    ):
+    for feature in CLUSTER_FEATURE_SPECS:
+        name = f"{feature}_tol"
         tolerance = getattr(clustered, name)
         if tolerance is not None:
             attrs[name] = ",".join(f"{value:g}" for value in tolerance)
