@@ -151,6 +151,7 @@ class SpiresData:
         reflectance_tol: "Tolerance | None" = None,
         background_tol: "Tolerance | None" = None,
         solar_zenith_tol: "Tolerance | None" = None,
+        cosine_illumination_tol: "Tolerance | None" = None,
     ) -> "SpiresData":
         """Return a new object with cluster labels and representatives on the scene."""
         from spires_io.clustering import cluster_spectra_block
@@ -167,6 +168,11 @@ class SpiresData:
             reflectance=self.target_spectra.values,
             background=None if self.background is None else self.background.values,
             solar_zenith=self.solar_zenith.values,
+            cosine_illumination=(
+                None
+                if "cosine_illumination" not in self.scene
+                else self.scene["cosine_illumination"].values
+            ),
             features=features if features is not None else defaults["features"],
             valid_mask=cluster_valid_mask.values,
             representative_method=(
@@ -188,6 +194,11 @@ class SpiresData:
                 solar_zenith_tol
                 if solar_zenith_tol is not None
                 else defaults["solar_zenith_tol"]
+            ),
+            cosine_illumination_tol=(
+                cosine_illumination_tol
+                if cosine_illumination_tol is not None
+                else defaults["cosine_illumination_tol"]
             ),
         )
         scene = _assign_cluster_outputs(
@@ -211,6 +222,9 @@ def _cluster_defaults(defaults: Mapping[str, Any]) -> dict[str, Any]:
         "reflectance_tol": defaults.get("reflectance_tol", 0.02),
         "background_tol": defaults.get("background_tol", 0.02),
         "solar_zenith_tol": defaults.get("solar_zenith_tol", 2.0),
+        "cosine_illumination_tol": defaults.get(
+            "cosine_illumination_tol", 0.02
+        ),
     }
 
 
@@ -319,15 +333,37 @@ def _assign_cluster_outputs(
             name="cluster_representative_solar_zenith",
             attrs=_cluster_attrs(clustered),
         )
+    if clustered.representative_cosine_illumination is not None:
+        updated["cluster_representative_cosine_illumination"] = xr.DataArray(
+            clustered.representative_cosine_illumination,
+            dims=("cluster",),
+            coords={"cluster": cluster_coord},
+            name="cluster_representative_cosine_illumination",
+            attrs={
+                **_cluster_attrs(clustered),
+                "long_name": "Representative cosine of local solar incidence",
+                "units": "1",
+            },
+        )
 
     return updated
 
 
 def _cluster_attrs(clustered: "ClusteredSpectra") -> dict[str, str]:
-    return {
+    attrs = {
         "features": ",".join(clustered.features),
         "representative_method": clustered.representative_method,
     }
+    for name in (
+        "reflectance_tol",
+        "background_tol",
+        "solar_zenith_tol",
+        "cosine_illumination_tol",
+    ):
+        tolerance = getattr(clustered, name)
+        if tolerance is not None:
+            attrs[name] = ",".join(f"{value:g}" for value in tolerance)
+    return attrs
 
 
 def _validate_cluster_label_name(label_name: str) -> str:

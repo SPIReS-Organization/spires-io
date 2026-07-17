@@ -285,6 +285,7 @@ class ClusterConfig:
     reflectance_tol: float | list[float] = 0.02
     background_tol: float | list[float] = 0.02
     solar_zenith_tol: float | list[float] = 2.0
+    cosine_illumination_tol: float | list[float] = 0.02
     ignore_cloudmask: bool = False
 
     def __post_init__(self) -> None:
@@ -319,7 +320,12 @@ class ClusterConfig:
             )
         self.representative_method = method
 
-        for name in ("reflectance_tol", "background_tol", "solar_zenith_tol"):
+        for name in (
+            "reflectance_tol",
+            "background_tol",
+            "solar_zenith_tol",
+            "cosine_illumination_tol",
+        ):
             _validate_positive_tolerance(getattr(self, name), f"clustering.{name}")
 
     def to_cluster_kwargs(self) -> dict[str, Any]:
@@ -330,6 +336,7 @@ class ClusterConfig:
             "reflectance_tol": self.reflectance_tol,
             "background_tol": self.background_tol,
             "solar_zenith_tol": self.solar_zenith_tol,
+            "cosine_illumination_tol": self.cosine_illumination_tol,
         }
 
 

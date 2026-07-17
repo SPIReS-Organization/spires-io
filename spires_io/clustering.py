@@ -16,7 +16,9 @@ DEFAULT_CLUSTER_FEATURES: tuple[FeatureName, ...] = (
     "background",
     "solar_zenith",
 )
-SUPPORTED_CLUSTER_FEATURES = frozenset(DEFAULT_CLUSTER_FEATURES)
+SUPPORTED_CLUSTER_FEATURES = frozenset(
+    (*DEFAULT_CLUSTER_FEATURES, "cosine_illumination")
+)
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,7 @@ class ClusteredSpectra:
     representative_reflectance: np.ndarray | None
     representative_background: np.ndarray | None
     representative_solar_zenith: np.ndarray | None
+    representative_cosine_illumination: np.ndarray | None
     inverse_indices: np.ndarray
     counts: np.ndarray
     valid_flat_indices: np.ndarray
@@ -35,6 +38,7 @@ class ClusteredSpectra:
     reflectance_tol: np.ndarray | None
     background_tol: np.ndarray | None
     solar_zenith_tol: np.ndarray | None
+    cosine_illumination_tol: np.ndarray | None
     original_shape: tuple[int, ...]
 
     @property
@@ -52,6 +56,7 @@ def cluster_spectra_rows(
     reflectance: np.ndarray | None = None,
     background: np.ndarray | None = None,
     solar_zenith: np.ndarray | None = None,
+    cosine_illumination: np.ndarray | None = None,
     *,
     features: Sequence[FeatureName] | None = None,
     valid_mask: np.ndarray | None = None,
@@ -59,6 +64,7 @@ def cluster_spectra_rows(
     reflectance_tol: Tolerance = 0.02,
     background_tol: Tolerance = 0.02,
     solar_zenith_tol: Tolerance = 2.0,
+    cosine_illumination_tol: Tolerance = 0.02,
 ) -> ClusteredSpectra:
     """Cluster rows into approximate unique feature sets."""
     selected_features = _normalize_features(features)
@@ -68,6 +74,7 @@ def cluster_spectra_rows(
         reflectance=reflectance,
         background=background,
         solar_zenith=solar_zenith,
+        cosine_illumination=cosine_illumination,
     )
     n_samples = _feature_sample_count(arrays)
     valid = _build_valid_mask(arrays, valid_mask, n_samples)
@@ -77,6 +84,7 @@ def cluster_spectra_rows(
         reflectance_tol=reflectance_tol,
         background_tol=background_tol,
         solar_zenith_tol=solar_zenith_tol,
+        cosine_illumination_tol=cosine_illumination_tol,
     )
 
     if valid_flat_indices.size == 0:
@@ -111,6 +119,9 @@ def cluster_spectra_rows(
         representative_reflectance=representatives.get("reflectance"),
         representative_background=representatives.get("background"),
         representative_solar_zenith=_as_1d_or_none(representatives.get("solar_zenith")),
+        representative_cosine_illumination=_as_1d_or_none(
+            representatives.get("cosine_illumination")
+        ),
         inverse_indices=np.ascontiguousarray(inverse_indices),
         counts=np.ascontiguousarray(counts),
         valid_flat_indices=np.ascontiguousarray(valid_flat_indices),
@@ -120,6 +131,7 @@ def cluster_spectra_rows(
         reflectance_tol=tolerances.get("reflectance"),
         background_tol=tolerances.get("background"),
         solar_zenith_tol=tolerances.get("solar_zenith"),
+        cosine_illumination_tol=tolerances.get("cosine_illumination"),
         original_shape=_rows_original_shape(arrays, n_samples),
     )
 
@@ -128,6 +140,7 @@ def cluster_spectra_block(
     reflectance: np.ndarray | None = None,
     background: np.ndarray | None = None,
     solar_zenith: np.ndarray | None = None,
+    cosine_illumination: np.ndarray | None = None,
     *,
     features: Sequence[FeatureName] | None = None,
     valid_mask: np.ndarray | None = None,
@@ -135,6 +148,7 @@ def cluster_spectra_block(
     reflectance_tol: Tolerance = 0.02,
     background_tol: Tolerance = 0.02,
     solar_zenith_tol: Tolerance = 2.0,
+    cosine_illumination_tol: Tolerance = 0.02,
 ) -> ClusteredSpectra:
     """Cluster an arbitrary block shaped ``(..., band)`` for spectral features."""
     selected_features = _normalize_features(features)
@@ -143,11 +157,15 @@ def cluster_spectra_block(
         reflectance=reflectance,
         background=background,
         solar_zenith=solar_zenith,
+        cosine_illumination=cosine_illumination,
     )
 
     flat_reflectance = _flatten_spectral_block(block_arrays.get("reflectance"), n_bands)
     flat_background = _flatten_spectral_block(block_arrays.get("background"), n_bands)
     flat_solar = _flatten_scalar_block(block_arrays.get("solar_zenith"))
+    flat_illumination = _flatten_scalar_block(
+        block_arrays.get("cosine_illumination")
+    )
 
     flat_valid_mask = None
     if valid_mask is not None:
@@ -158,18 +176,23 @@ def cluster_spectra_block(
         flat_reflectance,
         flat_background,
         flat_solar,
+        flat_illumination,
         features=selected_features,
         valid_mask=flat_valid_mask,
         representative_method=representative_method,
         reflectance_tol=reflectance_tol,
         background_tol=background_tol,
         solar_zenith_tol=solar_zenith_tol,
+        cosine_illumination_tol=cosine_illumination_tol,
     )
 
     return ClusteredSpectra(
         representative_reflectance=clustered.representative_reflectance,
         representative_background=clustered.representative_background,
         representative_solar_zenith=clustered.representative_solar_zenith,
+        representative_cosine_illumination=(
+            clustered.representative_cosine_illumination
+        ),
         inverse_indices=clustered.inverse_indices,
         counts=clustered.counts,
         valid_flat_indices=clustered.valid_flat_indices,
@@ -179,6 +202,7 @@ def cluster_spectra_block(
         reflectance_tol=clustered.reflectance_tol,
         background_tol=clustered.background_tol,
         solar_zenith_tol=clustered.solar_zenith_tol,
+        cosine_illumination_tol=clustered.cosine_illumination_tol,
         original_shape=sample_shape + (n_bands,),
     )
 
@@ -263,6 +287,7 @@ def _prepare_row_features(
     reflectance: np.ndarray | None,
     background: np.ndarray | None,
     solar_zenith: np.ndarray | None,
+    cosine_illumination: np.ndarray | None,
 ) -> dict[FeatureName, np.ndarray]:
     arrays: dict[FeatureName, np.ndarray] = {}
     if "reflectance" in features:
@@ -277,13 +302,26 @@ def _prepare_row_features(
         if solar_zenith is None:
             raise ValueError("solar_zenith is required when features includes 'solar_zenith'")
         arrays["solar_zenith"] = _as_float64_1d(solar_zenith, "solar_zenith")[:, None]
+    if "cosine_illumination" in features:
+        if cosine_illumination is None:
+            raise ValueError(
+                "cosine_illumination is required when features includes "
+                "'cosine_illumination'"
+            )
+        arrays["cosine_illumination"] = _as_float64_1d(
+            cosine_illumination, "cosine_illumination"
+        )[:, None]
 
     n_samples = _feature_sample_count(arrays)
     for feature, values in arrays.items():
-        if values.shape[0] != n_samples:
+        if values.shape[0] not in {1, n_samples}:
             raise ValueError(
-                f"{feature} must have the same number of samples as other features; "
-                f"got {values.shape[0]} and {n_samples}"
+                f"{feature} must have {n_samples} samples or one broadcastable "
+                f"sample; got {values.shape[0]}"
+            )
+        if values.shape[0] == 1 and n_samples != 1:
+            arrays[feature] = np.broadcast_to(
+                values, (n_samples, values.shape[1])
             )
     return arrays
 
@@ -294,15 +332,47 @@ def _prepare_block_features(
     reflectance: np.ndarray | None,
     background: np.ndarray | None,
     solar_zenith: np.ndarray | None,
+    cosine_illumination: np.ndarray | None,
 ) -> tuple[dict[FeatureName, np.ndarray], tuple[int, ...], int]:
-    reference = _block_reference_array(features, reflectance, background)
-    if reference.ndim < 2:
+    supplied = {
+        "reflectance": reflectance,
+        "background": background,
+        "solar_zenith": solar_zenith,
+        "cosine_illumination": cosine_illumination,
+    }
+    sample_shapes: list[tuple[int, ...]] = []
+    spectral_band_counts: list[int] = []
+    for feature in features:
+        value = supplied[feature]
+        if value is None:
+            raise ValueError(f"{feature} is required when features includes {feature!r}")
+        shape = np.shape(value)
+        if feature in {"reflectance", "background"}:
+            if len(shape) < 2:
+                raise ValueError(
+                    "spectral features must have at least one sample dimension plus "
+                    f"a trailing band dimension; got {shape}"
+                )
+            sample_shapes.append(shape[:-1])
+            spectral_band_counts.append(shape[-1])
+        else:
+            if not shape:
+                raise ValueError(f"{feature} must have at least one sample dimension")
+            sample_shapes.append(shape)
+
+    try:
+        sample_shape = np.broadcast_shapes(*sample_shapes)
+    except ValueError as exc:
         raise ValueError(
-            "spectral features must have at least one sample dimension plus "
-            f"a trailing band dimension; got {reference.shape}"
+            "selected clustering features have incompatible sample shapes: "
+            f"{sample_shapes}"
+        ) from exc
+    if spectral_band_counts and len(set(spectral_band_counts)) != 1:
+        raise ValueError(
+            "selected spectral clustering features must have the same number "
+            f"of bands; got {spectral_band_counts}"
         )
-    sample_shape = reference.shape[:-1]
-    n_bands = reference.shape[-1]
+    n_bands = spectral_band_counts[0] if spectral_band_counts else 1
 
     arrays: dict[FeatureName, np.ndarray] = {}
     if "reflectance" in features:
@@ -332,28 +402,18 @@ def _prepare_block_features(
             "solar_zenith",
             np.float64,
         )
+    if "cosine_illumination" in features:
+        arrays["cosine_illumination"] = _broadcast_to_shape(
+            cosine_illumination,
+            sample_shape,
+            "cosine_illumination",
+            np.float64,
+        )
     return arrays, sample_shape, n_bands
 
 
-def _block_reference_array(
-    features: Sequence[FeatureName],
-    reflectance: np.ndarray | None,
-    background: np.ndarray | None,
-) -> np.ndarray:
-    if "reflectance" in features:
-        if reflectance is None:
-            raise ValueError("reflectance is required when features includes 'reflectance'")
-        return np.asarray(reflectance, dtype=np.float64)
-    if "background" in features:
-        if background is None:
-            raise ValueError("background is required when features includes 'background'")
-        return np.asarray(background, dtype=np.float64)
-    raise ValueError("block clustering requires 'reflectance' or 'background' to define band shape")
-
-
 def _feature_sample_count(arrays: dict[FeatureName, np.ndarray]) -> int:
-    first = next(iter(arrays.values()))
-    return int(first.shape[0])
+    return max(int(values.shape[0]) for values in arrays.values())
 
 
 def _rows_original_shape(arrays: dict[FeatureName, np.ndarray], n_samples: int) -> tuple[int, ...]:
@@ -391,6 +451,7 @@ def _normalize_feature_tolerances(
     reflectance_tol: Tolerance,
     background_tol: Tolerance,
     solar_zenith_tol: Tolerance,
+    cosine_illumination_tol: Tolerance,
 ) -> dict[FeatureName, np.ndarray]:
     tolerances: dict[FeatureName, np.ndarray] = {}
     if "reflectance" in arrays:
@@ -410,6 +471,12 @@ def _normalize_feature_tolerances(
             solar_zenith_tol,
             1,
             "solar_zenith_tol",
+        )
+    if "cosine_illumination" in arrays:
+        tolerances["cosine_illumination"] = _normalize_tolerance(
+            cosine_illumination_tol,
+            1,
+            "cosine_illumination_tol",
         )
     return tolerances
 
@@ -477,6 +544,9 @@ def _empty_clustered_spectra(
         representative_solar_zenith=_as_1d_or_none(
             _empty_representative(arrays.get("solar_zenith"))
         ),
+        representative_cosine_illumination=_as_1d_or_none(
+            _empty_representative(arrays.get("cosine_illumination"))
+        ),
         inverse_indices=np.empty((0,), dtype=np.int64),
         counts=np.empty((0,), dtype=np.int64),
         valid_flat_indices=np.empty((0,), dtype=np.int64),
@@ -486,6 +556,7 @@ def _empty_clustered_spectra(
         reflectance_tol=tolerances.get("reflectance"),
         background_tol=tolerances.get("background"),
         solar_zenith_tol=tolerances.get("solar_zenith"),
+        cosine_illumination_tol=tolerances.get("cosine_illumination"),
         original_shape=original_shape,
     )
 

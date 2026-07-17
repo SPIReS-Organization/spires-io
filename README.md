@@ -76,3 +76,31 @@ settings and default to `false`. They do not dispatch postprocessing in this
 phase. `calculate_albedo: true` does require enough geometry to derive
 `cosine_illumination`; missing solar azimuth, slope, or aspect raises a clear
 loading error.
+
+## Optional illumination clustering
+
+`cosine_illumination` is an opt-in clustering feature alongside reflectance,
+background reflectance, and solar zenith. Its default dimensionless tolerance
+is `0.02` and can be tuned with `clustering.cosine_illumination_tol`. Any
+nonempty feature subset is supported, including scalar-only selections:
+
+```json
+{
+  "clustering": {
+    "enabled": true,
+    "features": ["solar_zenith", "cosine_illumination"],
+    "solar_zenith_tol": 2.0,
+    "cosine_illumination_tol": 0.02
+  }
+}
+```
+
+Only selected features determine grouping and finite-value eligibility. The
+clustered scene includes `cluster_representative_cosine_illumination` when that
+feature is selected. Configured loading requires derivable illumination
+geometry only when clustering is enabled and the feature is selected; a direct
+`SpiresData.cluster()` request raises `ValueError` if it is absent.
+
+Clustering currently materializes scene arrays in memory. Cluster-to-inversion
+handoff and scattering are deferred; postprocessing continues to evaluate
+pixel-level illumination after inversion products have been scattered.
