@@ -89,51 +89,6 @@ class SpiresData:
             cluster_defaults=dict(self.cluster_defaults),
         )
 
-    def assign_viewable_canopy_fraction(
-        self,
-        *,
-        average_vertical_crown_radius: float = 4.644,
-        average_horizontal_crown_radius: float = 1.72,
-    ) -> "SpiresData":
-        """Return a new object with viewable canopy fraction assigned."""
-        if self.ancillary is None:
-            raise ValueError("ancillary data must include canopy_fraction")
-        if "canopy_fraction" not in self.ancillary:
-            raise ValueError("ancillary data must include canopy_fraction")
-        if "sensor_zenith" not in self.scene:
-            raise ValueError("scene must include sensor_zenith")
-        if "sensor_azimuth" not in self.scene:
-            raise ValueError("scene must include sensor_azimuth")
-
-        ancillary = self.ancillary.copy()
-        canopy_fraction = _validate_ancillary_layer(
-            self.scene,
-            ancillary["canopy_fraction"],
-            "canopy_fraction",
-        )
-        slope = _optional_ancillary_layer(self.scene, ancillary, "slope", default=0.0)
-        aspect = _optional_ancillary_layer(self.scene, ancillary, "aspect", default=0.0)
-        sensor_zenith = _validate_scene_layer(self.scene, "sensor_zenith")
-        sensor_azimuth = _validate_scene_layer(self.scene, "sensor_azimuth")
-
-        viewable_canopy_fraction = _compute_viewable_canopy_fraction(
-            canopy_fraction=canopy_fraction,
-            slope=slope,
-            aspect=aspect,
-            sensor_zenith=sensor_zenith,
-            sensor_azimuth=sensor_azimuth,
-            average_vertical_crown_radius=average_vertical_crown_radius,
-            average_horizontal_crown_radius=average_horizontal_crown_radius,
-        )
-        ancillary["viewable_canopy_fraction"] = viewable_canopy_fraction
-
-        return SpiresData(
-            scene=self.scene.copy(),
-            background=self.background.copy() if self.background is not None else None,
-            ancillary=ancillary,
-            cluster_defaults=dict(self.cluster_defaults),
-        )
-
     def assign_mask(self, name: str, mask: xr.DataArray) -> "SpiresData":
         """Return a new object with an external inversion-exclusion mask assigned."""
         return self.assign_masks({name: mask})
@@ -284,77 +239,6 @@ def _validate_mask(scene: xr.Dataset, mask: xr.DataArray) -> xr.DataArray:
         raise ValueError("mask must have dims ('y', 'x')")
     _require_matching_coords(scene, mask, ("y", "x"), "mask")
     return mask.astype(bool)
-
-
-def _validate_scene_layer(scene: xr.Dataset, name: str) -> xr.DataArray:
-    layer = scene[name]
-    if layer.dims != ("y", "x"):
-        raise ValueError(f"scene[{name!r}] must have dims ('y', 'x')")
-    _require_matching_coords(scene, layer, ("y", "x"), f"scene[{name!r}]")
-    return layer.astype("float32")
-
-
-def _validate_ancillary_layer(
-    scene: xr.Dataset,
-    layer: xr.DataArray,
-    name: str,
-) -> xr.DataArray:
-    if layer.dims != ("y", "x"):
-        raise ValueError(f"ancillary[{name!r}] must have dims ('y', 'x')")
-    _require_matching_coords(scene, layer, ("y", "x"), f"ancillary[{name!r}]")
-    return layer.astype("float32")
-
-
-def _optional_ancillary_layer(
-    scene: xr.Dataset,
-    ancillary: xr.Dataset,
-    name: str,
-    *,
-    default: float,
-) -> xr.DataArray | float:
-    if name not in ancillary:
-        return default
-    return _validate_ancillary_layer(scene, ancillary[name], name)
-
-
-def _compute_viewable_canopy_fraction(
-    *,
-    canopy_fraction: xr.DataArray,
-    slope: xr.DataArray | float,
-    aspect: xr.DataArray | float,
-    sensor_zenith: xr.DataArray,
-    sensor_azimuth: xr.DataArray,
-    average_vertical_crown_radius: float,
-    average_horizontal_crown_radius: float,
-) -> xr.DataArray:
-    if average_vertical_crown_radius <= 0:
-        raise ValueError("average_vertical_crown_radius must be > 0")
-    if average_horizontal_crown_radius <= 0:
-        raise ValueError("average_horizontal_crown_radius must be > 0")
-
-    b_r = average_vertical_crown_radius / average_horizontal_crown_radius
-    theta_v_prime = np.arctan(b_r * np.tan(np.deg2rad(sensor_zenith)))
-    theta_s_prime = np.deg2rad(
-        90.0 - np.rad2deg(np.arctan(b_r * np.tan(np.deg2rad(90.0 - slope))))
-    )
-    phi_v_prime = np.deg2rad(sensor_azimuth - aspect)
-
-    exponent = np.cos(theta_s_prime) / (
-        np.cos(phi_v_prime) * np.sin(theta_v_prime) * np.sin(theta_s_prime)
-        + np.cos(theta_v_prime) * np.cos(theta_s_prime)
-    )
-    viewable_canopy_fraction = 1.0 - ((1.0 - canopy_fraction) ** exponent)
-    viewable_canopy_fraction = viewable_canopy_fraction.astype("float32")
-    viewable_canopy_fraction.name = "viewable_canopy_fraction"
-    viewable_canopy_fraction.attrs.update(
-        {
-            "long_name": "viewable canopy fraction",
-            "source": "canopy_fraction adjusted for terrain and sensor view geometry",
-            "average_vertical_crown_radius": average_vertical_crown_radius,
-            "average_horizontal_crown_radius": average_horizontal_crown_radius,
-        }
-    )
-    return viewable_canopy_fraction
 
 
 def _validate_valid_mask_override(
