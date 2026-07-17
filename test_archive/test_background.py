@@ -46,9 +46,9 @@ def test_load_background_reflectance_reads_spires_r0_xarray_product(tmp_path):
     loaded = load_background_reflectance(path, target_scene=scene)
 
     assert loaded.name == "background_reflectance"
-    assert loaded.dtype == np.dtype("float64")
+    assert loaded.dtype == np.dtype("float32")
     validate_background_spectra(loaded)
-    xr.testing.assert_equal(loaded, background.astype("float64").rename("background_reflectance"))
+    xr.testing.assert_equal(loaded, background.astype("float32").rename("background_reflectance"))
 
 
 def test_load_background_reflectance_reads_multiband_geotiff(tmp_path):
@@ -72,7 +72,7 @@ def test_load_background_reflectance_reads_multiband_geotiff(tmp_path):
 
     assert loaded.dims == ("y", "x", "band")
     assert loaded.coords["band"].values.tolist() == ["red", "nir"]
-    assert loaded.dtype == np.dtype("float64")
+    assert loaded.dtype == np.dtype("float32")
     np.testing.assert_array_equal(loaded.values, values.transpose(1, 2, 0))
     validate_background_spectra(loaded)
 

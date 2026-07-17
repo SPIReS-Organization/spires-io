@@ -278,7 +278,7 @@ def test_inversion_inputs_requires_background():
         SpiresData.from_scene(scene).inversion_inputs()
 
 
-def test_inversion_inputs_returns_float64_arrays_and_updated_valid_mask():
+def test_inversion_inputs_returns_float32_arrays_and_updated_valid_mask():
     scene = prepare_modis_scene_for_inversion(build_mock_modis_raw_dataset())
     background = _background_for(scene)
     mask = _mask_for(scene, [[False, True], [False, False]])
@@ -292,9 +292,10 @@ def test_inversion_inputs_returns_float64_arrays_and_updated_valid_mask():
         "obs_solar_angles",
         "valid_mask",
     }
-    assert inputs["spectra_targets"].dtype == np.dtype("float64")
-    assert inputs["spectra_backgrounds"].dtype == np.dtype("float64")
-    assert inputs["obs_solar_angles"].dtype == np.dtype("float64")
+    # io->inversion boundary is float32 (spires-contract ACCEPTED_DTYPES).
+    assert inputs["spectra_targets"].dtype == np.dtype("float32")
+    assert inputs["spectra_backgrounds"].dtype == np.dtype("float32")
+    assert inputs["obs_solar_angles"].dtype == np.dtype("float32")
 
     expected_valid = scene["valid_inversion_mask"] & (~mask)
     expected_valid.name = "valid_inversion_mask"

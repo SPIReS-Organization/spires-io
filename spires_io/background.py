@@ -49,7 +49,7 @@ def load_background_reflectance(
         )
 
     background = _canonicalize_background(background, target_scene=target_scene)
-    background = background.astype("float64")
+    background = background.astype("float32")
     background.name = "background_reflectance"
     _validate_background_contract(background)
     return background

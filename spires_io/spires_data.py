@@ -173,9 +173,9 @@ class SpiresData:
             raise ValueError("background must be assigned before building inversion inputs")
 
         return {
-            "spectra_targets": self.target_spectra.astype("float64"),
-            "spectra_backgrounds": self.background.astype("float64"),
-            "obs_solar_angles": self.solar_zenith.astype("float64"),
+            "spectra_targets": self.target_spectra.astype("float32"),
+            "spectra_backgrounds": self.background.astype("float32"),
+            "obs_solar_angles": self.solar_zenith.astype("float32"),
             "valid_mask": self.valid_mask,
         }
 

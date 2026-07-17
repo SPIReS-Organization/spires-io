@@ -344,7 +344,7 @@ def test_load_background_image_reads_xarray_dataarray(tmp_path):
 
     loaded = load_background_image(str(path))
 
-    expected = background.astype("float64")
+    expected = background.astype("float32")
     expected.name = "background_reflectance"
     xr.testing.assert_equal(loaded, expected)
 
