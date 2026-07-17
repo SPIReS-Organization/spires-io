@@ -220,7 +220,7 @@ def _clean_layer_values(layer: xr.DataArray, *, name: str) -> xr.DataArray:
     elif name == "slope":
         layer = layer.where((layer >= 0.0) & (layer <= constants.MAX_ZENITH))
     elif name == "aspect":
-        layer = layer.where((layer >= 0.0) & (layer <= constants.MAX_ASPECT))
+        layer = layer.where((layer >= 0.0) & (layer < constants.MAX_ASPECT))
     elif name == "dem":
         layer = layer.where((layer >= constants.MIN_ELEV) & (layer <= constants.MAX_ELEV))
     elif name == "skyview":

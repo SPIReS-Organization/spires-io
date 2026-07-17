@@ -256,10 +256,20 @@ class SpatialConfig:
 class PostprocessConfig:
     apply_canopy_correction: bool = False
     apply_ice_adjustment: bool = False
+    calculate_albedo: bool = False
+    calculate_delta_vis: bool = False
+    calculate_radiative_forcing: bool = False
     average_vertical_crown_radius: float = 4.644
     average_horizontal_crown_radius: float = 1.72
 
     def __post_init__(self) -> None:
+        for name in (
+            "calculate_albedo",
+            "calculate_delta_vis",
+            "calculate_radiative_forcing",
+        ):
+            if type(getattr(self, name)) is not bool:
+                raise TypeError(f"postprocess.{name} must be a boolean")
         if self.average_vertical_crown_radius <= 0:
             raise ValueError("average_vertical_crown_radius must be > 0")
         if self.average_horizontal_crown_radius <= 0:

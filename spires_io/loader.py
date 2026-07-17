@@ -14,6 +14,7 @@ from spires_io.configs import (
     SpiresConfig,
     SpiresRunConfig,
 )
+from spires_io.geometry import add_illumination_geometry
 import spires_io.constants as constants
 from spires_io.masks import load_external_mask
 from spires_io.spires_data import SpiresData
@@ -80,6 +81,11 @@ class SpiresDataLoader:
             _single_scene_ancillary_sources(config),
             target_scene=scene,
         )
+        scene = add_illumination_geometry(
+            scene,
+            ancillary,
+            require_illumination=_requires_illumination_geometry(config),
+        )
         return SpiresData.from_scene(
             scene,
             background=background,
@@ -102,6 +108,11 @@ class SpiresDataLoader:
         )
         background = self._background_loader(item.background_image, target_scene=scene)
         ancillary = self._ancillary_loader(item.ancillary, target_scene=scene)
+        scene = add_illumination_geometry(
+            scene,
+            ancillary,
+            require_illumination=_requires_illumination_geometry(self.run_config),
+        )
         data = SpiresData.from_scene(
             scene,
             background=background,
@@ -167,6 +178,8 @@ def _validate_postprocess_ancillary(
         required.append("canopy_fraction")
     if config.postprocess.apply_ice_adjustment:
         required.append("ice_fraction")
+    if _requires_illumination_geometry(config):
+        required.extend(("slope", "aspect"))
 
     missing = [name for name in required if item.ancillary.get(name) is None]
     if missing:
@@ -174,6 +187,13 @@ def _validate_postprocess_ancillary(
             "manifest scene is missing ancillary input(s) required by postprocess: "
             f"{missing}"
         )
+
+
+def _requires_illumination_geometry(config: SpiresConfig | SpiresRunConfig) -> bool:
+    return config.postprocess.calculate_albedo or (
+        config.clustering.enabled
+        and "cosine_illumination" in config.clustering.features
+    )
 
 
 def _assign_manifest_masks(

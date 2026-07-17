@@ -20,6 +20,10 @@ from spires_io.configs import (
     SceneManifestItem,
     SpiresRunConfig,
 )
+from spires_io.geometry import (
+    add_illumination_geometry,
+    derive_illumination_geometry,
+)
 from spires_io.loader import SpiresDataLoader
 from spires_io.masks import load_external_mask
 from spires_io.spires_data import SpiresData
@@ -35,7 +39,9 @@ __all__ = [
     "SpiresDataLoader",
     "SpiresDataWriter",
     "SpiresRunConfig",
+    "add_illumination_geometry",
     "describe_sensor",
+    "derive_illumination_geometry",
     "list_supported_sensor_platforms",
     "list_supported_sensors",
     "load_ancillary_layer",
