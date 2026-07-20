@@ -9,8 +9,8 @@ from test_viirs_load_surface_reflectance import build_mock_viirs_raw_dataset
 
 
 def _validate_scene_arrays(scene):
-    target_spectra = scene["reflectance"].astype("float64")
-    solar_angles = scene["solar_zenith"].astype("float64")
+    target_spectra = scene["reflectance"].astype("float32")
+    solar_angles = scene["solar_zenith"].astype("float32")
 
     validate_target_spectra(target_spectra)
     validate_solar_angles(solar_angles)
