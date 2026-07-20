@@ -14,6 +14,7 @@ from spires_io.configs import (
     SpiresConfig,
     SpiresRunConfig,
 )
+from spires_io.geometry import add_illumination_geometry
 import spires_io.constants as constants
 from spires_io.masks import load_external_mask
 from spires_io.spires_data import SpiresData
@@ -80,18 +81,17 @@ class SpiresDataLoader:
             _single_scene_ancillary_sources(config),
             target_scene=scene,
         )
-        data = SpiresData.from_scene(
+        scene = add_illumination_geometry(
+            scene,
+            ancillary,
+            require_illumination=_requires_illumination_geometry(config),
+        )
+        return SpiresData.from_scene(
             scene,
             background=background,
             ancillary=ancillary,
             cluster_defaults=config.clustering.to_cluster_kwargs(),
         )
-        if config.canopy.viewable_fraction:
-            data = data.assign_viewable_canopy_fraction(
-                average_vertical_crown_radius=config.canopy.average_vertical_crown_radius,
-                average_horizontal_crown_radius=config.canopy.average_horizontal_crown_radius,
-            )
-        return data
 
     def load_item(self, item: SceneManifestItem | Mapping[str, Any]) -> SpiresData:
         """Load one scene manifest item using this loader's run-wide policy."""
@@ -99,6 +99,7 @@ class SpiresDataLoader:
             raise ValueError("load_item() requires a SpiresRunConfig")
         if isinstance(item, Mapping):
             item = SceneManifestItem.from_mapping(item, item_index=0)
+        _validate_postprocess_ancillary(self.run_config, item)
 
         scene = self._scene_preparer(
             item.image_path,
@@ -107,21 +108,17 @@ class SpiresDataLoader:
         )
         background = self._background_loader(item.background_image, target_scene=scene)
         ancillary = self._ancillary_loader(item.ancillary, target_scene=scene)
+        scene = add_illumination_geometry(
+            scene,
+            ancillary,
+            require_illumination=_requires_illumination_geometry(self.run_config),
+        )
         data = SpiresData.from_scene(
             scene,
             background=background,
             ancillary=ancillary,
             cluster_defaults=self.run_config.clustering.to_cluster_kwargs(),
         )
-        if self.run_config.canopy.viewable_fraction:
-            data = data.assign_viewable_canopy_fraction(
-                average_vertical_crown_radius=(
-                    self.run_config.canopy.average_vertical_crown_radius
-                ),
-                average_horizontal_crown_radius=(
-                    self.run_config.canopy.average_horizontal_crown_radius
-                ),
-            )
         return _assign_manifest_masks(data, item.masks, scene, self._mask_loader)
 
 
@@ -170,6 +167,33 @@ def _single_scene_ancillary_sources(config: SpiresConfig) -> dict[str, str]:
         for name in constants.STATIC_DATA
         if (path := getattr(config.files, name)) is not None
     }
+
+
+def _validate_postprocess_ancillary(
+    config: SpiresRunConfig,
+    item: SceneManifestItem,
+) -> None:
+    required = []
+    if config.postprocess.apply_canopy_correction:
+        required.append("canopy_fraction")
+    if config.postprocess.apply_ice_adjustment:
+        required.append("ice_fraction")
+    if _requires_illumination_geometry(config):
+        required.extend(("slope", "aspect"))
+
+    missing = [name for name in required if item.ancillary.get(name) is None]
+    if missing:
+        raise ValueError(
+            "manifest scene is missing ancillary input(s) required by postprocess: "
+            f"{missing}"
+        )
+
+
+def _requires_illumination_geometry(config: SpiresConfig | SpiresRunConfig) -> bool:
+    return config.postprocess.calculate_albedo or (
+        config.clustering.enabled
+        and "cosine_illumination" in config.clustering.features
+    )
 
 
 def _assign_manifest_masks(

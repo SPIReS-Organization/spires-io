@@ -16,4 +16,11 @@ MAX_AOD = 1.0
 MIN_H2O = 0.2
 MAX_H2O = 5.0
 
-STATIC_DATA = ("canopy_fraction", "dem", "slope", "aspect", "skyview")
+STATIC_DATA = (
+    "canopy_fraction",
+    "ice_fraction",
+    "dem",
+    "slope",
+    "aspect",
+    "skyview",
+)

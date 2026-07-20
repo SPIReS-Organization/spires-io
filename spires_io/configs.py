@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, List
 
 import spires_io.constants as constants
+from spires_io.clustering import CLUSTER_FEATURE_SPECS, SUPPORTED_CLUSTER_FEATURES
 from spires_io.file_types import ALL_SUPPORTED_FILE_SUFFIXES
 from spires_io.registry import list_supported_sensors, normalize_sensor_name
 from spires_io.sensor_metadata import get_sensor_metadata
@@ -27,6 +28,7 @@ class FilesConfig:
     aspect: Optional[str] = None
     skyview: Optional[str] = None
     canopy_fraction: Optional[str] = None
+    ice_fraction: Optional[str] = None
 
     def __init__(
         self,
@@ -43,6 +45,7 @@ class FilesConfig:
         aspect: Optional[str] = None,
         skyview: Optional[str] = None,
         canopy_fraction: Optional[str] = None,
+        ice_fraction: Optional[str] = None,
     ) -> None:
         if background_image is not None and snowfree_image is not None:
             raise ValueError(
@@ -69,6 +72,7 @@ class FilesConfig:
         self.aspect = aspect
         self.skyview = skyview
         self.canopy_fraction = canopy_fraction
+        self.ice_fraction = ice_fraction
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -250,12 +254,23 @@ class SpatialConfig:
 
 
 @dataclass
-class CanopyConfig:
-    viewable_fraction: bool = False
+class PostprocessConfig:
+    apply_canopy_correction: bool = False
+    apply_ice_adjustment: bool = False
+    calculate_albedo: bool = False
+    calculate_delta_vis: bool = False
+    calculate_radiative_forcing: bool = False
     average_vertical_crown_radius: float = 4.644
     average_horizontal_crown_radius: float = 1.72
 
     def __post_init__(self) -> None:
+        for name in (
+            "calculate_albedo",
+            "calculate_delta_vis",
+            "calculate_radiative_forcing",
+        ):
+            if type(getattr(self, name)) is not bool:
+                raise TypeError(f"postprocess.{name} must be a boolean")
         if self.average_vertical_crown_radius <= 0:
             raise ValueError("average_vertical_crown_radius must be > 0")
         if self.average_horizontal_crown_radius <= 0:
@@ -268,14 +283,21 @@ class ClusterConfig:
     features: Sequence[str] = ("reflectance", "background", "solar_zenith")
     label_name: str = "cluster_label"
     representative_method: str = "cluster_mean"
-    reflectance_tol: float | list[float] = 0.02
-    background_tol: float | list[float] = 0.02
-    solar_zenith_tol: float | list[float] = 2.0
+    reflectance_tol: float | list[float] = CLUSTER_FEATURE_SPECS[
+        "reflectance"
+    ].default_tolerance
+    background_tol: float | list[float] = CLUSTER_FEATURE_SPECS[
+        "background"
+    ].default_tolerance
+    solar_zenith_tol: float | list[float] = CLUSTER_FEATURE_SPECS[
+        "solar_zenith"
+    ].default_tolerance
+    cosine_illumination_tol: float | list[float] = CLUSTER_FEATURE_SPECS[
+        "cosine_illumination"
+    ].default_tolerance
     ignore_cloudmask: bool = False
 
     def __post_init__(self) -> None:
-        from spires_io.clustering import SUPPORTED_CLUSTER_FEATURES
-
         if self.features is None:
             raise ValueError("clustering.features must list at least one feature")
         normalized_features = tuple(str(feature).lower() for feature in self.features)
@@ -305,18 +327,23 @@ class ClusterConfig:
             )
         self.representative_method = method
 
-        for name in ("reflectance_tol", "background_tol", "solar_zenith_tol"):
+        for feature in CLUSTER_FEATURE_SPECS:
+            name = f"{feature}_tol"
             _validate_positive_tolerance(getattr(self, name), f"clustering.{name}")
 
     def to_cluster_kwargs(self) -> dict[str, Any]:
-        return {
+        kwargs = {
             "features": self.features,
             "label_name": self.label_name,
             "representative_method": self.representative_method,
-            "reflectance_tol": self.reflectance_tol,
-            "background_tol": self.background_tol,
-            "solar_zenith_tol": self.solar_zenith_tol,
         }
+        kwargs.update(
+            {
+                f"{feature}_tol": getattr(self, f"{feature}_tol")
+                for feature in CLUSTER_FEATURE_SPECS
+            }
+        )
+        return kwargs
 
 
 def _validate_positive_tolerance(value: float | list[float], name: str) -> None:
@@ -366,7 +393,7 @@ class SpiresRunConfig:
     inversion: InversionConfig = field(default_factory=InversionConfig)
     clustering: ClusterConfig = field(default_factory=ClusterConfig)
     spatial: SpatialConfig = field(default_factory=SpatialConfig)
-    canopy: CanopyConfig = field(default_factory=CanopyConfig)
+    postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
     output_policy: dict[str, Any] = field(default_factory=dict)
     ancillary_paths: dict[str, Any] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
@@ -393,7 +420,7 @@ class SpiresRunConfig:
         inversion = InversionConfig(**_section_mapping(data, "inversion"))
         clustering = ClusterConfig(**_section_mapping(data, "clustering"))
         spatial = SpatialConfig(**_section_mapping(data, "spatial"))
-        canopy = CanopyConfig(**_section_mapping(data, "canopy"))
+        postprocess = PostprocessConfig(**_section_mapping(data, "postprocess"))
 
         known_keys = {
             "sensor",
@@ -403,7 +430,7 @@ class SpiresRunConfig:
             "inversion",
             "clustering",
             "spatial",
-            "canopy",
+            "postprocess",
             "output",
             "output_policy",
             "ancillary",
@@ -418,7 +445,7 @@ class SpiresRunConfig:
             inversion=inversion,
             clustering=clustering,
             spatial=spatial,
-            canopy=canopy,
+            postprocess=postprocess,
             output_policy=_section_mapping(data, "output_policy", alias="output"),
             ancillary_paths=_section_mapping(data, "ancillary_paths", alias="ancillary"),
             extra={key: value for key, value in data.items() if key not in known_keys},
@@ -552,9 +579,6 @@ MOVED_OPTION_KEYS = {
     "use_custom_sensor_resolution": "spatial.use_custom_sensor_resolution",
     "clustering_method": "clustering.representative_method",
     "ignore_cloudmask_for_clustering": "clustering.ignore_cloudmask",
-    "canopy_vza_adjustment": "canopy.viewable_fraction",
-    "average_vertical_crown_radius": "canopy.average_vertical_crown_radius",
-    "average_horizontal_crown_radius": "canopy.average_horizontal_crown_radius",
     "max_sensor_zenith": "reader.max_sensor_zenith",
     "max_solar_zenith": "reader.max_solar_zenith",
     "mask_water_using_reflectance_qf": "mask.mask_water_using_reflectance_qf",
@@ -583,6 +607,7 @@ LEGACY_TOP_LEVEL_SECTIONS = {
     "reader_options": "reader",
     "mask_policy": "mask",
     "resampling": "spatial",
+    "canopy": "postprocess",
 }
 
 
@@ -630,17 +655,24 @@ class SpiresConfig:
         self.reader = ReaderConfig(**_section_mapping(data, "reader"))
         self.mask = MaskConfig(**_section_mapping(data, "mask"))
         self.spatial = SpatialConfig(**_section_mapping(data, "spatial"))
-        self.canopy = CanopyConfig(**_section_mapping(data, "canopy"))
+        self.postprocess = PostprocessConfig(**_section_mapping(data, "postprocess"))
         self.clustering = ClusterConfig(**_section_mapping(data, "clustering"))
         self.lut = LookUpTableConfig(**_section_mapping(data, "lut"))
         self.inv = InversionConfig(**_section_mapping(data, "inversion"))
 
-        if self.canopy.viewable_fraction:
-            if self.files.canopy_fraction is None:
-                raise ValueError(
-                    "If setting canopy.viewable_fraction to true, "
-                    "files.canopy_fraction must be provided."
-                )
+        if (
+            self.postprocess.apply_canopy_correction
+            and self.files.canopy_fraction is None
+        ):
+            raise ValueError(
+                "If setting postprocess.apply_canopy_correction to true, "
+                "files.canopy_fraction must be provided."
+            )
+        if self.postprocess.apply_ice_adjustment and self.files.ice_fraction is None:
+            raise ValueError(
+                "If setting postprocess.apply_ice_adjustment to true, "
+                "files.ice_fraction must be provided."
+            )
 
         if self.option.ignore_topography_correction:
             self.sensor.apply_topo_correction = False

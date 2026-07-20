@@ -209,15 +209,18 @@ def _try_reproject_aspect_match(
 def _clean_layer_values(layer: xr.DataArray, *, name: str) -> xr.DataArray:
     layer = layer.astype("float32")
 
-    if name == "canopy_fraction":
+    if name in {"canopy_fraction", "ice_fraction"}:
         if bool((layer > 1.0 + constants.EPS).fillna(False).any()):
             layer = layer / 100.0
         layer = layer.fillna(0.0)
-        layer = layer.where(layer <= 1.0 + constants.EPS)
+        layer = layer.where(
+            (layer >= 0.0 - constants.EPS) & (layer <= 1.0 + constants.EPS)
+        )
+        layer = layer.clip(min=0.0, max=1.0)
     elif name == "slope":
         layer = layer.where((layer >= 0.0) & (layer <= constants.MAX_ZENITH))
     elif name == "aspect":
-        layer = layer.where((layer >= 0.0) & (layer <= constants.MAX_ASPECT))
+        layer = layer.where((layer >= 0.0) & (layer < constants.MAX_ASPECT))
     elif name == "dem":
         layer = layer.where((layer >= constants.MIN_ELEV) & (layer <= constants.MAX_ELEV))
     elif name == "skyview":

@@ -13,7 +13,17 @@ from spires_io.api import (
 )
 from spires_io.ancillary import load_ancillary_layer, load_ancillary_layers
 from spires_io.background import load_background_reflectance
-from spires_io.configs import MaskConfig, SceneManifest, SceneManifestItem, SpiresRunConfig
+from spires_io.configs import (
+    MaskConfig,
+    PostprocessConfig,
+    SceneManifest,
+    SceneManifestItem,
+    SpiresRunConfig,
+)
+from spires_io.geometry import (
+    add_illumination_geometry,
+    derive_illumination_geometry,
+)
 from spires_io.loader import SpiresDataLoader
 from spires_io.masks import load_external_mask
 from spires_io.spires_data import SpiresData
@@ -24,11 +34,14 @@ __all__ = [
     "SceneManifest",
     "SceneManifestItem",
     "MaskConfig",
+    "PostprocessConfig",
     "SpiresData",
     "SpiresDataLoader",
     "SpiresDataWriter",
     "SpiresRunConfig",
+    "add_illumination_geometry",
     "describe_sensor",
+    "derive_illumination_geometry",
     "list_supported_sensor_platforms",
     "list_supported_sensors",
     "load_ancillary_layer",

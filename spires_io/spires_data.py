@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import xarray as xr
 
+from spires_io.clustering import CLUSTER_FEATURE_SPECS
+
 if TYPE_CHECKING:
     from spires_io.clustering import ClusteredSpectra, Tolerance
 
@@ -89,51 +91,6 @@ class SpiresData:
             cluster_defaults=dict(self.cluster_defaults),
         )
 
-    def assign_viewable_canopy_fraction(
-        self,
-        *,
-        average_vertical_crown_radius: float = 4.644,
-        average_horizontal_crown_radius: float = 1.72,
-    ) -> "SpiresData":
-        """Return a new object with viewable canopy fraction assigned."""
-        if self.ancillary is None:
-            raise ValueError("ancillary data must include canopy_fraction")
-        if "canopy_fraction" not in self.ancillary:
-            raise ValueError("ancillary data must include canopy_fraction")
-        if "sensor_zenith" not in self.scene:
-            raise ValueError("scene must include sensor_zenith")
-        if "sensor_azimuth" not in self.scene:
-            raise ValueError("scene must include sensor_azimuth")
-
-        ancillary = self.ancillary.copy()
-        canopy_fraction = _validate_ancillary_layer(
-            self.scene,
-            ancillary["canopy_fraction"],
-            "canopy_fraction",
-        )
-        slope = _optional_ancillary_layer(self.scene, ancillary, "slope", default=0.0)
-        aspect = _optional_ancillary_layer(self.scene, ancillary, "aspect", default=0.0)
-        sensor_zenith = _validate_scene_layer(self.scene, "sensor_zenith")
-        sensor_azimuth = _validate_scene_layer(self.scene, "sensor_azimuth")
-
-        viewable_canopy_fraction = _compute_viewable_canopy_fraction(
-            canopy_fraction=canopy_fraction,
-            slope=slope,
-            aspect=aspect,
-            sensor_zenith=sensor_zenith,
-            sensor_azimuth=sensor_azimuth,
-            average_vertical_crown_radius=average_vertical_crown_radius,
-            average_horizontal_crown_radius=average_horizontal_crown_radius,
-        )
-        ancillary["viewable_canopy_fraction"] = viewable_canopy_fraction
-
-        return SpiresData(
-            scene=self.scene.copy(),
-            background=self.background.copy() if self.background is not None else None,
-            ancillary=ancillary,
-            cluster_defaults=dict(self.cluster_defaults),
-        )
-
     def assign_mask(self, name: str, mask: xr.DataArray) -> "SpiresData":
         """Return a new object with an external inversion-exclusion mask assigned."""
         return self.assign_masks({name: mask})
@@ -196,6 +153,7 @@ class SpiresData:
         reflectance_tol: "Tolerance | None" = None,
         background_tol: "Tolerance | None" = None,
         solar_zenith_tol: "Tolerance | None" = None,
+        cosine_illumination_tol: "Tolerance | None" = None,
     ) -> "SpiresData":
         """Return a new object with cluster labels and representatives on the scene."""
         from spires_io.clustering import cluster_spectra_block
@@ -208,10 +166,35 @@ class SpiresData:
             else _validate_valid_mask_override(self.scene, valid_mask)
         )
 
+        feature_values = {
+            "reflectance": self.target_spectra.values,
+            "background": (
+                None if self.background is None else self.background.values
+            ),
+            "solar_zenith": self.solar_zenith.values,
+            "cosine_illumination": (
+                None
+                if "cosine_illumination" not in self.scene
+                else self.scene["cosine_illumination"].values
+            ),
+        }
+        tolerance_overrides = {
+            "reflectance": reflectance_tol,
+            "background": background_tol,
+            "solar_zenith": solar_zenith_tol,
+            "cosine_illumination": cosine_illumination_tol,
+        }
+        tolerance_kwargs = {
+            f"{feature}_tol": (
+                tolerance_overrides[feature]
+                if tolerance_overrides[feature] is not None
+                else defaults[f"{feature}_tol"]
+            )
+            for feature in CLUSTER_FEATURE_SPECS
+        }
+
         clustered = cluster_spectra_block(
-            reflectance=self.target_spectra.values,
-            background=None if self.background is None else self.background.values,
-            solar_zenith=self.solar_zenith.values,
+            **feature_values,
             features=features if features is not None else defaults["features"],
             valid_mask=cluster_valid_mask.values,
             representative_method=(
@@ -219,21 +202,7 @@ class SpiresData:
                 if representative_method is not None
                 else defaults["representative_method"]
             ),
-            reflectance_tol=(
-                reflectance_tol
-                if reflectance_tol is not None
-                else defaults["reflectance_tol"]
-            ),
-            background_tol=(
-                background_tol
-                if background_tol is not None
-                else defaults["background_tol"]
-            ),
-            solar_zenith_tol=(
-                solar_zenith_tol
-                if solar_zenith_tol is not None
-                else defaults["solar_zenith_tol"]
-            ),
+            **tolerance_kwargs,
         )
         scene = _assign_cluster_outputs(
             self.scene,
@@ -249,14 +218,20 @@ class SpiresData:
 
 
 def _cluster_defaults(defaults: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+    normalized = {
         "features": defaults.get("features"),
         "label_name": defaults.get("label_name", "cluster_label"),
         "representative_method": defaults.get("representative_method", "cluster_mean"),
-        "reflectance_tol": defaults.get("reflectance_tol", 0.02),
-        "background_tol": defaults.get("background_tol", 0.02),
-        "solar_zenith_tol": defaults.get("solar_zenith_tol", 2.0),
     }
+    normalized.update(
+        {
+            f"{feature}_tol": defaults.get(
+                f"{feature}_tol", spec.default_tolerance
+            )
+            for feature, spec in CLUSTER_FEATURE_SPECS.items()
+        }
+    )
+    return normalized
 
 
 def _validate_scene(scene: xr.Dataset) -> None:
@@ -284,77 +259,6 @@ def _validate_mask(scene: xr.Dataset, mask: xr.DataArray) -> xr.DataArray:
         raise ValueError("mask must have dims ('y', 'x')")
     _require_matching_coords(scene, mask, ("y", "x"), "mask")
     return mask.astype(bool)
-
-
-def _validate_scene_layer(scene: xr.Dataset, name: str) -> xr.DataArray:
-    layer = scene[name]
-    if layer.dims != ("y", "x"):
-        raise ValueError(f"scene[{name!r}] must have dims ('y', 'x')")
-    _require_matching_coords(scene, layer, ("y", "x"), f"scene[{name!r}]")
-    return layer.astype("float32")
-
-
-def _validate_ancillary_layer(
-    scene: xr.Dataset,
-    layer: xr.DataArray,
-    name: str,
-) -> xr.DataArray:
-    if layer.dims != ("y", "x"):
-        raise ValueError(f"ancillary[{name!r}] must have dims ('y', 'x')")
-    _require_matching_coords(scene, layer, ("y", "x"), f"ancillary[{name!r}]")
-    return layer.astype("float32")
-
-
-def _optional_ancillary_layer(
-    scene: xr.Dataset,
-    ancillary: xr.Dataset,
-    name: str,
-    *,
-    default: float,
-) -> xr.DataArray | float:
-    if name not in ancillary:
-        return default
-    return _validate_ancillary_layer(scene, ancillary[name], name)
-
-
-def _compute_viewable_canopy_fraction(
-    *,
-    canopy_fraction: xr.DataArray,
-    slope: xr.DataArray | float,
-    aspect: xr.DataArray | float,
-    sensor_zenith: xr.DataArray,
-    sensor_azimuth: xr.DataArray,
-    average_vertical_crown_radius: float,
-    average_horizontal_crown_radius: float,
-) -> xr.DataArray:
-    if average_vertical_crown_radius <= 0:
-        raise ValueError("average_vertical_crown_radius must be > 0")
-    if average_horizontal_crown_radius <= 0:
-        raise ValueError("average_horizontal_crown_radius must be > 0")
-
-    b_r = average_vertical_crown_radius / average_horizontal_crown_radius
-    theta_v_prime = np.arctan(b_r * np.tan(np.deg2rad(sensor_zenith)))
-    theta_s_prime = np.deg2rad(
-        90.0 - np.rad2deg(np.arctan(b_r * np.tan(np.deg2rad(90.0 - slope))))
-    )
-    phi_v_prime = np.deg2rad(sensor_azimuth - aspect)
-
-    exponent = np.cos(theta_s_prime) / (
-        np.cos(phi_v_prime) * np.sin(theta_v_prime) * np.sin(theta_s_prime)
-        + np.cos(theta_v_prime) * np.cos(theta_s_prime)
-    )
-    viewable_canopy_fraction = 1.0 - ((1.0 - canopy_fraction) ** exponent)
-    viewable_canopy_fraction = viewable_canopy_fraction.astype("float32")
-    viewable_canopy_fraction.name = "viewable_canopy_fraction"
-    viewable_canopy_fraction.attrs.update(
-        {
-            "long_name": "viewable canopy fraction",
-            "source": "canopy_fraction adjusted for terrain and sensor view geometry",
-            "average_vertical_crown_radius": average_vertical_crown_radius,
-            "average_horizontal_crown_radius": average_horizontal_crown_radius,
-        }
-    )
-    return viewable_canopy_fraction
 
 
 def _validate_valid_mask_override(
@@ -405,45 +309,43 @@ def _assign_cluster_outputs(
         attrs=_cluster_attrs(clustered),
     )
 
-    if clustered.representative_reflectance is not None:
-        updated["cluster_representative_reflectance"] = xr.DataArray(
-            clustered.representative_reflectance,
-            dims=("cluster", "band"),
-            coords={
-                "cluster": cluster_coord,
-                "band": updated.coords["band"].values,
-            },
-            name="cluster_representative_reflectance",
-            attrs=_cluster_attrs(clustered),
-        )
-    if clustered.representative_background is not None:
-        updated["cluster_representative_background"] = xr.DataArray(
-            clustered.representative_background,
-            dims=("cluster", "band"),
-            coords={
-                "cluster": cluster_coord,
-                "band": updated.coords["band"].values,
-            },
-            name="cluster_representative_background",
-            attrs=_cluster_attrs(clustered),
-        )
-    if clustered.representative_solar_zenith is not None:
-        updated["cluster_representative_solar_zenith"] = xr.DataArray(
-            clustered.representative_solar_zenith,
-            dims=("cluster",),
-            coords={"cluster": cluster_coord},
-            name="cluster_representative_solar_zenith",
-            attrs=_cluster_attrs(clustered),
+    cluster_attrs = _cluster_attrs(clustered)
+    for feature, spec in CLUSTER_FEATURE_SPECS.items():
+        representative = getattr(clustered, f"representative_{feature}")
+        if representative is None:
+            continue
+        variable_name = f"cluster_representative_{feature}"
+        spectral = spec.kind == "spectral"
+        coords = {"cluster": cluster_coord}
+        if spectral:
+            coords["band"] = updated.coords["band"].values
+        attrs = dict(cluster_attrs)
+        if spec.representative_long_name is not None:
+            attrs["long_name"] = spec.representative_long_name
+        if spec.units is not None:
+            attrs["units"] = spec.units
+        updated[variable_name] = xr.DataArray(
+            representative,
+            dims=("cluster", "band") if spectral else ("cluster",),
+            coords=coords,
+            name=variable_name,
+            attrs=attrs,
         )
 
     return updated
 
 
 def _cluster_attrs(clustered: "ClusteredSpectra") -> dict[str, str]:
-    return {
+    attrs = {
         "features": ",".join(clustered.features),
         "representative_method": clustered.representative_method,
     }
+    for feature in CLUSTER_FEATURE_SPECS:
+        name = f"{feature}_tol"
+        tolerance = getattr(clustered, name)
+        if tolerance is not None:
+            attrs[name] = ",".join(f"{value:g}" for value in tolerance)
+    return attrs
 
 
 def _validate_cluster_label_name(label_name: str) -> str:
