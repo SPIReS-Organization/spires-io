@@ -245,7 +245,7 @@ def scatter_cluster_results(
     n_properties: int | None = None,
 ) -> np.ndarray:
     """Broadcast cluster-level results back to flattened samples."""
-    results = np.asarray(cluster_results, dtype=np.float64)
+    results = np.asarray(cluster_results, dtype=np.float32)
     if results.ndim == 1:
         results = results[:, None]
     if results.ndim != 2:
@@ -264,7 +264,7 @@ def scatter_cluster_results(
             f"got {n_properties} and {results.shape[1]}"
         )
 
-    full = np.full((n_samples, n_properties), fill_value, dtype=np.float64)
+    full = np.full((n_samples, n_properties), fill_value, dtype=np.float32)
     if clustered.n_valid > 0:
         full[clustered.valid_flat_indices] = results[clustered.inverse_indices]
     return full
@@ -353,9 +353,9 @@ def _prepare_row_features(
                 f"{feature} is required when features includes {feature!r}"
             )
         if CLUSTER_FEATURE_SPECS[feature].kind == "spectral":
-            arrays[feature] = _as_float64_2d(values, feature)
+            arrays[feature] = _as_float32_2d(values, feature)
         else:
-            arrays[feature] = _as_float64_1d(values, feature)[:, None]
+            arrays[feature] = _as_float32_1d(values, feature)[:, None]
 
     n_samples = _feature_sample_count(arrays)
     for feature, values in arrays.items():
@@ -418,7 +418,7 @@ def _prepare_block_features(
                 else sample_shape
             ),
             feature,
-            np.float64,
+            np.float32,
         )
         for feature in features
     }
@@ -477,11 +477,11 @@ def _normalize_tolerance(
     size: int,
     name: str,
 ) -> np.ndarray:
-    arr = np.asarray(value, dtype=np.float64)
+    arr = np.asarray(value, dtype=np.float32)
     if arr.ndim == 0:
-        out = np.full(size, float(arr), dtype=np.float64)
+        out = np.full(size, float(arr), dtype=np.float32)
     elif arr.ndim == 1 and arr.size == size:
-        out = arr.astype(np.float64, copy=False)
+        out = arr.astype(np.float32, copy=False)
     else:
         raise ValueError(
             f"{name} must be a scalar or a 1D array of length {size}; got shape {arr.shape}"
@@ -505,7 +505,9 @@ def _representative_values(
             representative = values[representative_indices]
         else:
             representative = _cluster_means(values, inverse_indices, n_clusters, counts)
-        representatives[feature] = np.ascontiguousarray(representative)
+        representatives[feature] = np.ascontiguousarray(
+            representative, dtype=np.float32
+        )
     return representatives
 
 
@@ -555,11 +557,11 @@ def _empty_clustered_spectra(
 def _empty_representative(values: np.ndarray | None) -> np.ndarray | None:
     if values is None:
         return None
-    return np.empty((0, values.shape[1]), dtype=np.float64)
+    return np.empty((0, values.shape[1]), dtype=np.float32)
 
 
-def _as_float64_2d(array: np.ndarray, name: str) -> np.ndarray:
-    arr = np.asarray(array, dtype=np.float64)
+def _as_float32_2d(array: np.ndarray, name: str) -> np.ndarray:
+    arr = np.asarray(array, dtype=np.float32)
     if arr.ndim != 2:
         raise ValueError(
             f"{name} must be a 2D array with shape (n_samples, n_bands); "
@@ -568,8 +570,8 @@ def _as_float64_2d(array: np.ndarray, name: str) -> np.ndarray:
     return np.ascontiguousarray(arr)
 
 
-def _as_float64_1d(array: np.ndarray, name: str) -> np.ndarray:
-    arr = np.asarray(array, dtype=np.float64)
+def _as_float32_1d(array: np.ndarray, name: str) -> np.ndarray:
+    arr = np.asarray(array, dtype=np.float32)
     if arr.ndim != 1:
         raise ValueError(f"{name} must be a 1D array with shape (n_samples,); got {arr.shape}")
     return np.ascontiguousarray(arr)
