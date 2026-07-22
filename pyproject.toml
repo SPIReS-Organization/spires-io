@@ -12,7 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "Niklas Griessbaum" }]
 keywords = ["snow", "remote sensing", "xarray", "MODIS", "Sentinel-2", "Landsat"]
 dependencies = [
-    "spires-contract",
+    "spires-contract @ git+https://github.com/SPIReS-Organization/spires-contract.git@v1.0.0",
     "numpy",
     "xarray",
     "h5py",
