@@ -12,6 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "Niklas Griessbaum" }]
 keywords = ["snow", "remote sensing", "xarray", "MODIS", "Sentinel-2", "Landsat"]
 dependencies = [
+    "spires-contract",
     "numpy",
     "xarray",
     "h5py",
@@ -23,7 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest", "spires-contract"]
+test = ["pytest"]
 
 [project.urls]
 Homepage = "https://github.com/SPIReS-Organization/spires-io"

@@ -163,7 +163,9 @@ def resolve_viirs_inversion_bands_with_source(
     """Resolve the VIIRS band order for inversion prep and report its source."""
     if bands is not None:
         return normalize_viirs_band_names(bands), "explicit"
-    if lut_file is not None:
+    # Band inference belongs only to the transitional MATLAB adapter. Canonical
+    # NetCDF LUTs are master products and are down-selected explicitly.
+    if lut_file is not None and Path(lut_file).suffix.lower() == ".mat":
         metadata_bands = infer_viirs_lut_band_names_from_metadata(lut_file)
         if metadata_bands is not None:
             return metadata_bands, "metadata"

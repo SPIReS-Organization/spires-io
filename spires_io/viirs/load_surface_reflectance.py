@@ -13,7 +13,7 @@ import xarray as xr
 
 from spires_io.logging_utils import log_event
 from spires_io.base import SceneMetadata, collect_attrs, normalize_path, read_scaled_array
-from spires_io.masks import load_external_mask_on_grid
+from spires_io.masks import load_external_mask_on_grid, pack_inversion_exclusions
 from spires_io.viirs.bands import (
     VIIRS_1KM_REFLECTANCE_BANDS,
     VIIRS_500M_REFLECTANCE_BANDS,
@@ -337,6 +337,7 @@ def _build_component_masks(
     mask_cloud: xr.DataArray,
     mask_cloud_shadow: xr.DataArray,
     mask_snow: xr.DataArray,
+    mask_bad_surface_reflectance_quality: xr.DataArray,
     mask_water_external: xr.DataArray | None = None,
     mask_ice_external: xr.DataArray | None = None,
     mask_playa_external: xr.DataArray | None = None,
@@ -351,6 +352,9 @@ def _build_component_masks(
     min_obs_500m: int,
 ) -> xr.Dataset:
     """Build transparent component masks and final valid masks on the 500 m grid."""
+    water_external_available = mask_water_external is not None
+    ice_external_available = mask_ice_external is not None
+    playa_external_available = mask_playa_external is not None
     finite_reflectance = np.isfinite(reflectance)
     mask_invalid_reflectance = ~finite_reflectance.all(dim="band")
 
@@ -397,29 +401,19 @@ def _build_component_masks(
         | (num_observations_500m < min_obs_500m)
     )
 
-    valid_inversion_mask = ~(
-        mask_invalid_reflectance
-        | mask_bad_geometry
-        | mask_water
-        | mask_low_observation_support
-        | mask_cloud
-        | mask_cloud_shadow
-        | mask_ice_external
-        | mask_playa_external
-        | mask_low_reflectance
-    )
     valid_r0_mask = ~(
         mask_invalid_reflectance
         | mask_bad_geometry
         | mask_low_observation_support
         | mask_cloud
         | mask_cloud_shadow
+        | mask_bad_surface_reflectance_quality
         | mask_ice_external
         | mask_playa_external
         | mask_snow
     )
 
-    return xr.Dataset(
+    components = xr.Dataset(
         data_vars={
             "mask_invalid_reflectance": mask_invalid_reflectance.astype(bool),
             "mask_bad_geometry": mask_bad_geometry.astype(bool),
@@ -430,13 +424,52 @@ def _build_component_masks(
             "mask_cloud": mask_cloud.astype(bool),
             "mask_cloud_shadow": mask_cloud_shadow.astype(bool),
             "mask_snow": mask_snow.astype(bool),
+            "mask_bad_surface_reflectance_quality": (
+                mask_bad_surface_reflectance_quality.astype(bool)
+            ),
             "mask_ice_external": mask_ice_external.astype(bool),
             "mask_playa_external": mask_playa_external.astype(bool),
             "mask_low_reflectance": mask_low_reflectance.astype(bool),
-            "valid_inversion_mask": valid_inversion_mask.astype(bool),
             "valid_r0_mask": valid_r0_mask.astype(bool),
         }
     )
+    known = xr.ones_like(false_mask, dtype=bool)
+    unknown = xr.zeros_like(false_mask, dtype=bool)
+    packed = pack_inversion_exclusions(
+        {
+            "invalid_reflectance": mask_invalid_reflectance,
+            "invalid_geometry": mask_bad_geometry,
+            "insufficient_observations": mask_low_observation_support,
+            "cloud": mask_cloud,
+            "cloud_shadow": mask_cloud_shadow,
+            "poor_surface_reflectance_quality": (
+                mask_bad_surface_reflectance_quality
+            ),
+            "water": mask_water,
+            "ice": mask_ice_external,
+            "playa": mask_playa_external,
+            "low_reflectance": mask_low_reflectance,
+        },
+        assessed={
+            "invalid_reflectance": known,
+            "invalid_geometry": known,
+            "insufficient_observations": known,
+            "cloud": known,
+            "cloud_shadow": known,
+            "poor_surface_reflectance_quality": known,
+            "water": known
+            if mask_water_using_reflectance_qf or water_external_available
+            else unknown,
+            "ice": known if ice_external_available else unknown,
+            "playa": known if playa_external_available else unknown,
+            "low_reflectance": known
+            if mask_low_reflectance_for_inversion
+            else unknown,
+        },
+        reference=false_mask,
+    )
+    components.update(packed)
+    return components
 
 
 def prepare_viirs_scene_for_inversion(
@@ -464,7 +497,6 @@ def prepare_viirs_scene_for_inversion(
     mask_water_using_external_file: bool = True,
     mask_low_reflectance_for_inversion: bool = False,
     low_reflectance_threshold: float = 0.1,
-    write_detailed_masks: bool = False,
 ) -> xr.Dataset:
     """
     Prepare a VIIRS scene on a single 500 m analysis grid for downstream inversion.
@@ -474,11 +506,13 @@ def prepare_viirs_scene_for_inversion(
     source
         Either a VIIRS file path or the output from ``open_viirs_surface_reflectance``.
     bands
-        Output band order for the merged 500 m analysis cube. If omitted, the
-        full reflective VIIRS set is used unless ``lut_file`` is provided.
+        Selected output bands, in analysis order, for the merged 500 m cube.
+        This explicit selection takes precedence over legacy LUT inference. If
+        omitted, the full reflective VIIRS set is used unless ``lut_file`` is
+        provided.
     lut_file
-        Optional LUT path used to infer the VIIRS band subset from the LUT
-        filename. Explicit ``bands`` takes precedence over this.
+        Optional legacy MATLAB LUT path used to infer the VIIRS band subset
+        from metadata or the filename. Explicit ``bands`` takes precedence.
     logger
         Optional logger for structured workflow messages.
     cloud_mask_source
@@ -581,7 +615,12 @@ def prepare_viirs_scene_for_inversion(
     qa_mask_ds = decode_viirs_qa_masks(
         prepared["qa_qf1"],
         prepared["qa_qf2"],
+        prepared["qa_qf3"],
+        prepared["qa_qf4"],
+        prepared["qa_qf5"],
+        prepared["qa_qf6"],
         prepared["qa_qf7"],
+        selected_bands=bands,
     )
     prepared.update(qa_mask_ds)
 
@@ -638,6 +677,7 @@ def prepare_viirs_scene_for_inversion(
         mask_cloud,
         mask_cloud_shadow,
         mask_snow,
+        prepared["mask_bad_surface_reflectance_quality"],
         mask_water_external,
         mask_ice_external,
         mask_playa_external,
@@ -651,7 +691,7 @@ def prepare_viirs_scene_for_inversion(
         min_obs_500m=min_obs_500m,
     )
     prepared.update(mask_ds)
-    prepared = _filter_mask_outputs(prepared, write_detailed_masks=write_detailed_masks)
+    prepared = _drop_component_masks(prepared)
 
     prepared["reflectance"].attrs["selected_bands"] = bands
     prepared["reflectance"].attrs["band_selection_source"] = band_selection_source
@@ -684,7 +724,6 @@ def prepare_viirs_scene_for_inversion(
         mask_water_using_external_file=mask_water_using_external_file,
         mask_low_reflectance_for_inversion=mask_low_reflectance_for_inversion,
         low_reflectance_threshold=low_reflectance_threshold,
-        write_detailed_masks=write_detailed_masks,
         output_shape=list(prepared["reflectance"].shape),
         elapsed_seconds=round(perf_counter() - start_time, 6),
     )
@@ -692,14 +731,7 @@ def prepare_viirs_scene_for_inversion(
     return prepared
 
 
-def _filter_mask_outputs(
-    prepared: xr.Dataset,
-    *,
-    write_detailed_masks: bool,
-) -> xr.Dataset:
-    if write_detailed_masks:
-        return prepared
-
+def _drop_component_masks(prepared: xr.Dataset) -> xr.Dataset:
     mask_vars = [
         name
         for name in prepared.data_vars

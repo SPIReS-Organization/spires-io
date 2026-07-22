@@ -156,7 +156,9 @@ def _align_layer_to_scene(
     *,
     name: str,
 ) -> xr.DataArray:
-    target = target_scene["valid_inversion_mask"]
+    if "reflectance" not in target_scene:
+        raise ValueError("target scene is missing required variable 'reflectance'")
+    target = target_scene["reflectance"].isel(band=0, drop=True).transpose("y", "x")
     if _coords_match(layer, target, ("y", "x")):
         return layer
 

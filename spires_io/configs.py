@@ -117,23 +117,40 @@ class SensorConfig:
 
         # Allows user to specify which bands to use
         if self.selected_bands is not None:
-            # This is hacky, but to allow VIIRS+MODIS etc to have band names that are string and
-            # hyperspectral to be band indicies which may be easier to use. TODO
-            if isinstance(self.band_names_full[0], (str, np.str_)):
-                mask = np.isin(
-                    self.band_names_full.astype(str),
-                    np.array(self.selected_bands).astype(str),
-                )
-            else:
-                mask = np.isin(
-                    self.band_names_full.astype(float),
-                    np.array(self.selected_bands).astype(float),
-                )
-            if not np.any(mask):
-                raise ValueError(f"No bands matched selection: {self.selected_bands}")
+            if not self.selected_bands:
+                raise ValueError("sensor.selected_bands must not be empty")
 
-            self.band_names = self.band_names_full[mask]
-            self.wavelength = self.wavelength_full[mask]
+            # The configured order is the analysis order. Preserve it so the
+            # prepared scene's band coordinate can be used as the authoritative
+            # selector for master reflectance/background products and LUTs.
+            canonical_lookup = {
+                str(band).strip().upper(): index
+                for index, band in enumerate(self.band_names_full)
+            }
+            selected_indices: list[int] = []
+            selected_names: list[str] = []
+            missing: list[str] = []
+            for requested in self.selected_bands:
+                key = str(requested).strip().upper()
+                if key not in canonical_lookup:
+                    missing.append(str(requested))
+                    continue
+                selected_indices.append(canonical_lookup[key])
+                selected_names.append(str(self.band_names_full[canonical_lookup[key]]))
+
+            if missing:
+                raise ValueError(
+                    f"Unsupported {self.name} band(s): {missing}; supported bands are "
+                    f"{self.band_names_full.tolist()}"
+                )
+            if len(set(selected_names)) != len(selected_names):
+                raise ValueError(
+                    f"Duplicate {self.name} band(s) requested: {selected_names}"
+                )
+
+            self.selected_bands = selected_names
+            self.band_names = self.band_names_full[selected_indices]
+            self.wavelength = self.wavelength_full[selected_indices]
         else:
             self.band_names = self.band_names_full
             self.wavelength = self.wavelength_full
@@ -178,7 +195,6 @@ class MaskConfig:
     mask_water_using_external_file: bool = True
     mask_low_reflectance_for_inversion: bool = False
     low_reflectance_threshold: float = 0.1
-    write_detailed_masks: bool = False
 
     def __post_init__(self) -> None:
         if self.low_reflectance_threshold < 0:
@@ -195,7 +211,6 @@ class MaskConfig:
             "mask_water_using_external_file": self.mask_water_using_external_file,
             "mask_low_reflectance_for_inversion": self.mask_low_reflectance_for_inversion,
             "low_reflectance_threshold": self.low_reflectance_threshold,
-            "write_detailed_masks": self.write_detailed_masks,
         }
 
 
@@ -281,7 +296,6 @@ class PostprocessConfig:
 class ClusterConfig:
     enabled: bool = False
     features: Sequence[str] = ("reflectance", "background", "solar_zenith")
-    label_name: str = "cluster_label"
     representative_method: str = "cluster_mean"
     reflectance_tol: float | list[float] = CLUSTER_FEATURE_SPECS[
         "reflectance"
@@ -295,7 +309,6 @@ class ClusterConfig:
     cosine_illumination_tol: float | list[float] = CLUSTER_FEATURE_SPECS[
         "cosine_illumination"
     ].default_tolerance
-    ignore_cloudmask: bool = False
 
     def __post_init__(self) -> None:
         if self.features is None:
@@ -313,11 +326,6 @@ class ClusterConfig:
             raise ValueError("clustering.features must not contain duplicates")
         self.features = normalized_features
 
-        cleaned_label = self.label_name.strip()
-        if not cleaned_label:
-            raise ValueError("clustering.label_name must be non-empty")
-        self.label_name = cleaned_label
-
         method = self.representative_method.lower()
         method = {"group_mean": "cluster_mean"}.get(method, method)
         if method not in {"cluster_mean", "first_pixel"}:
@@ -334,7 +342,6 @@ class ClusterConfig:
     def to_cluster_kwargs(self) -> dict[str, Any]:
         kwargs = {
             "features": self.features,
-            "label_name": self.label_name,
             "representative_method": self.representative_method,
         }
         kwargs.update(
@@ -357,7 +364,7 @@ def _validate_positive_tolerance(value: float | list[float], name: str) -> None:
 @dataclass
 class LookUpTableConfig:
     reflectance: Optional[str] = "reflectance"
-    grain_radius: Optional[str] = "grain_radius"
+    sqrt_grain_radius: Optional[str] = "sqrt_grain_radius"
     pollutant: Optional[str] = "dust"
     liquid_water_fraction: Optional[str] = None
     solar_zenith: Optional[str] = "solar_zenith"
@@ -370,8 +377,11 @@ class InversionConfig:
     max_eval: int = 100
     ftol_abs: float = 1e-6
     xtol_abs: float = 1e-6
+    apply_valid_inversion_mask: bool = True
 
     def __post_init__(self) -> None:
+        if type(self.apply_valid_inversion_mask) is not bool:
+            raise TypeError("inversion.apply_valid_inversion_mask must be a boolean")
         if self.nlopt_algorithm not in ["NLOPT_LN_NELDERMEAD", "NLOPT_LN_COBYLA"]:
             raise ValueError("Unsupported algorithm.")
 
@@ -578,14 +588,12 @@ MOVED_OPTION_KEYS = {
     "resampling_method": "spatial.resampling_method",
     "use_custom_sensor_resolution": "spatial.use_custom_sensor_resolution",
     "clustering_method": "clustering.representative_method",
-    "ignore_cloudmask_for_clustering": "clustering.ignore_cloudmask",
     "max_sensor_zenith": "reader.max_sensor_zenith",
     "max_solar_zenith": "reader.max_solar_zenith",
     "mask_water_using_reflectance_qf": "mask.mask_water_using_reflectance_qf",
     "mask_water_using_external_file": "mask.mask_water_using_external_file",
     "mask_low_reflectance_for_inversion": "mask.mask_low_reflectance_for_inversion",
     "low_reflectance_threshold": "mask.low_reflectance_threshold",
-    "write_detailed_masks": "mask.write_detailed_masks",
 }
 
 
@@ -599,7 +607,6 @@ MOVED_READER_KEYS = {
     "mask_water_using_external_file": "mask.mask_water_using_external_file",
     "mask_low_reflectance_for_inversion": "mask.mask_low_reflectance_for_inversion",
     "low_reflectance_threshold": "mask.low_reflectance_threshold",
-    "write_detailed_masks": "mask.write_detailed_masks",
 }
 
 
@@ -658,7 +665,9 @@ class SpiresConfig:
         self.postprocess = PostprocessConfig(**_section_mapping(data, "postprocess"))
         self.clustering = ClusterConfig(**_section_mapping(data, "clustering"))
         self.lut = LookUpTableConfig(**_section_mapping(data, "lut"))
-        self.inv = InversionConfig(**_section_mapping(data, "inversion"))
+        self.inversion = InversionConfig(**_section_mapping(data, "inversion"))
+        # Transitional alias for callers using the original single-scene API.
+        self.inv = self.inversion
 
         if (
             self.postprocess.apply_canopy_correction
