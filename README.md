@@ -17,6 +17,20 @@ data = spires_io.load("config.json")
 data = spires_io.cluster(data, features=("reflectance", "solar_zenith"))
 ```
 
+## Serialized SpiresData products
+
+Complete in-memory objects can be written atomically to a grouped NetCDF
+product and reconstructed for a later scientific stage:
+
+```python
+output_path = spires_io.write_spires_data(data, "prepared_scene.nc")
+restored = spires_io.read_spires_data(output_path)
+```
+
+The initial layout stores the required `scene` field and any populated
+`background`, `ancillary`, and `results` fields in matching NetCDF groups.
+Existing destinations are preserved unless overwrite is explicitly enabled.
+
 ## Inversion-exclusion provenance
 
 Prepared MODIS and VIIRS scenes store inversion exclusions in the canonical
