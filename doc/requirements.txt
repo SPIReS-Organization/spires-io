@@ -1,0 +1,11 @@
+# Sphinx doc build dependencies for spires-io.
+sphinx>=4.0
+pydata-sphinx-theme
+myst-parser
+sphinx-markdown-tables
+setuptools-scm
+
+# spires-contract is imported by the package; autodoc needs it importable.
+# Not yet on PyPI — install the pinned tag from GitHub. Replace with a plain
+# version spec once it publishes.
+spires-contract @ git+https://github.com/SPIReS-Organization/spires-contract@v1.0.0
