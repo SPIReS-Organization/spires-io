@@ -541,6 +541,15 @@ def prepare_viirs_scene_for_inversion(
         Values in ``land_water_mask`` that should be excluded as water or
         mixed water for inversion masking. By default this includes all
         VIIRS classes except land.
+    mask_low_reflectance_for_inversion
+        If true, assess the contract-defined ``low_reflectance`` exclusion.
+        A pixel is excluded only when every selected inversion band is below
+        ``low_reflectance_threshold``; no single visible or infrared band is
+        privileged.
+    low_reflectance_threshold
+        Per-band reflectance threshold used by the all-selected-bands test.
+        NDSI-based snow screening is a separate scientific policy and is not
+        inferred by this reader.
     """
     start_time = perf_counter()
     logger = logger or LOGGER

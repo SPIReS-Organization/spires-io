@@ -362,15 +362,6 @@ def _validate_positive_tolerance(value: float | list[float], name: str) -> None:
 
 
 @dataclass
-class LookUpTableConfig:
-    reflectance: Optional[str] = "reflectance"
-    sqrt_grain_radius: Optional[str] = "sqrt_grain_radius"
-    pollutant: Optional[str] = "dust"
-    liquid_water_fraction: Optional[str] = None
-    solar_zenith: Optional[str] = "solar_zenith"
-
-
-@dataclass
 class InversionConfig:
     nlopt_algorithm: str = "NLOPT_LN_NELDERMEAD"
     softmax_fractional_covers: bool = True
@@ -664,7 +655,6 @@ class SpiresConfig:
         self.spatial = SpatialConfig(**_section_mapping(data, "spatial"))
         self.postprocess = PostprocessConfig(**_section_mapping(data, "postprocess"))
         self.clustering = ClusterConfig(**_section_mapping(data, "clustering"))
-        self.lut = LookUpTableConfig(**_section_mapping(data, "lut"))
         self.inversion = InversionConfig(**_section_mapping(data, "inversion"))
         # Transitional alias for callers using the original single-scene API.
         self.inv = self.inversion
