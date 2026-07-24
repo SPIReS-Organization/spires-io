@@ -1,6 +1,5 @@
 from collections.abc import Mapping, Sequence
 import numpy as np
-import importlib.resources
 import json
 import warnings
 from pathlib import Path
@@ -678,12 +677,3 @@ class SpiresConfig:
 
         if self.sensor.apply_topo_correction:
             print("WARNING: topo correction not yet implemented.")
-        # TODO topo correction not yet implemented
-        # if self.sensor.apply_topo_correction:
-        #    for f in ["dem", "slope", "aspect"]:
-        #        path = Path(getattr(self.files, f) or "")
-        #        if not path.is_file():
-        #            raise FileNotFoundError(f"Topography data {f} missing at {path}")
-        #
-        #    pkg = importlib.resources.files("spires_io.data.topo_correction_lut")
-        #    self.srtmnet = pkg.joinpath("srtmnet_coarse.nc")
