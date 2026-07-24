@@ -412,7 +412,13 @@ def prepare_modis_scene_for_inversion(
     mask_low_reflectance_for_inversion: bool = False,
     low_reflectance_threshold: float = 0.1,
 ) -> xr.Dataset:
-    """Prepare a MODIS scene on a single 500 m analysis grid for inversion."""
+    """Prepare a MODIS scene on a single 500 m analysis grid for inversion.
+
+    When ``mask_low_reflectance_for_inversion`` is enabled, the
+    contract-defined ``low_reflectance`` exclusion is true only where every
+    selected inversion band is below ``low_reflectance_threshold``. This is
+    an all-selected-bands reflectance test, not an NDSI screen.
+    """
     start_time = perf_counter()
     logger = logger or LOGGER
     if low_reflectance_threshold < 0:
