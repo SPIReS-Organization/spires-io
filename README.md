@@ -40,13 +40,15 @@ Prepared MODIS and VIIRS scenes store inversion exclusions in the canonical
 masks. `write_detailed_masks` has been removed because the packed pair is the
 lossless, canonical representation.
 
-For VIIRS, all QF1-QF7 bytes are read even when reflectance is down-selected.
-QF3-QF6 band-specific SDR-input and surface-reflectance-quality flags are
-decoded for every supported reflective band on the separate `qa_band`
-coordinate. A pixel receives the `poor_surface_reflectance_quality` exclusion
-when any selected band is flagged, or when a required atmospheric-correction
-input is bad or missing. Flags belonging only to unselected bands remain
-available as diagnostics but do not exclude the pixel.
+For VIIRS, selected-band bad-SDR flags from QF3-QF4 and missing or invalid
+atmospheric-correction inputs from QF4-QF5 contribute to the
+`poor_surface_reflectance_quality` exclusion. QF4 AOT quality and the QF5-QF6
+overall surface-reflectance-quality bits are not inversion exclusions because
+they are systematically set over snow. QA fields are decoded transiently:
+raw, stacked, and decoded QA arrays are omitted from the prepared inversion
+scene after the SPIRES-owned `inversion_exclusion_flags`,
+`inversion_exclusion_assessed`, and `valid_inversion_mask` are constructed.
+Those three canonical mask variables remain in the prepared scene.
 
 ## Master products and band selection
 

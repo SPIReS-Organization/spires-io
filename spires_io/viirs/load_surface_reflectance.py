@@ -598,13 +598,6 @@ def prepare_viirs_scene_for_inversion(
         "solar_azimuth",
         "sensor_zenith",
         "sensor_azimuth",
-        "qa_qf1",
-        "qa_qf2",
-        "qa_qf3",
-        "qa_qf4",
-        "qa_qf5",
-        "qa_qf6",
-        "qa_qf7",
         "land_water_mask",
         "num_observations_1km",
         "obscov_1km",
@@ -616,19 +609,17 @@ def prepare_viirs_scene_for_inversion(
     for variable_name in ("iobs_res", "num_observations_500m", "obscov_500m"):
         prepared[variable_name] = _normalize_500m_dataarray(raw[variable_name])
 
-    prepared["qa_raw_stack"] = xr.concat(
-        [prepared[f"qa_qf{i}"] for i in range(1, 8)],
-        dim=xr.IndexVariable("qa_flag", [f"QF{i}" for i in range(1, 8)]),
-    ).transpose("y", "x", "qa_flag")
-
+    qa_500m = {
+        name: _upsample_1km_dataarray_to_500m(raw[name], target_x=x, target_y=y)
+        for name in ("qa_qf1", "qa_qf2", "qa_qf3", "qa_qf4", "qa_qf5", "qa_qf7")
+    }
     qa_mask_ds = decode_viirs_qa_masks(
-        prepared["qa_qf1"],
-        prepared["qa_qf2"],
-        prepared["qa_qf3"],
-        prepared["qa_qf4"],
-        prepared["qa_qf5"],
-        prepared["qa_qf6"],
-        prepared["qa_qf7"],
+        qa_500m["qa_qf1"],
+        qa_500m["qa_qf2"],
+        qa_500m["qa_qf3"],
+        qa_500m["qa_qf4"],
+        qa_500m["qa_qf5"],
+        qa_500m["qa_qf7"],
         selected_bands=bands,
     )
     prepared.update(qa_mask_ds)

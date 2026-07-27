@@ -9,8 +9,8 @@ import xarray as xr
 from spires_io.viirs.bands import VIIRS_ANALYSIS_BANDS, normalize_viirs_band_names
 
 
-# VNP09/VJ109/VJ209 QF3-QF6 use one Boolean bit per reflective band. A set
-# value means the band input or surface-reflectance result is unusable.
+# VNP09/VJ109/VJ209 QF3 and QF4 use one Boolean bit per reflective band
+# to report unusable sensor-data-record (SDR) input.
 VIIRS_BAD_SDR_INPUT_BITS: Mapping[str, tuple[str, int]] = {
     "I1": ("qf4", 1),
     "I2": ("qf4", 2),
@@ -24,21 +24,6 @@ VIIRS_BAD_SDR_INPUT_BITS: Mapping[str, tuple[str, int]] = {
     "M8": ("qf3", 6),
     "M10": ("qf3", 7),
     "M11": ("qf4", 0),
-}
-
-VIIRS_BAD_SURFACE_REFLECTANCE_BITS: Mapping[str, tuple[str, int]] = {
-    "I1": ("qf6", 3),
-    "I2": ("qf6", 4),
-    "I3": ("qf6", 5),
-    "M1": ("qf5", 2),
-    "M2": ("qf5", 3),
-    "M3": ("qf5", 4),
-    "M4": ("qf5", 5),
-    "M5": ("qf5", 6),
-    "M7": ("qf5", 7),
-    "M8": ("qf6", 0),
-    "M10": ("qf6", 1),
-    "M11": ("qf6", 2),
 }
 
 
@@ -73,25 +58,24 @@ def decode_viirs_qa_masks(
     qa_qf3: xr.DataArray,
     qa_qf4: xr.DataArray,
     qa_qf5: xr.DataArray,
-    qa_qf6: xr.DataArray,
     qa_qf7: xr.DataArray,
     *,
     selected_bands: Sequence[str] | None = None,
 ) -> xr.Dataset:
     """
-    Decode VIIRS QF1-QF7 fields used for inversion and R0 workflows.
+    Decode the VIIRS QA fields needed for inversion and R0 masks.
 
     Current policy:
     - cloud: probably cloudy, confidently cloudy, thin cirrus, or adjacent-to-cloud
     - cloud shadow: native shadow bit
     - snow: native snow/ice or snow-present flags
-    - poor reflectance quality: any selected band has bad SDR input or bad
-      surface-reflectance quality, or a required atmospheric-correction input
-      is missing/bad
+    - poor reflectance quality: any selected band has bad SDR input, or a
+      required atmospheric-correction input is missing or invalid
 
-    Per-band QF3-QF6 diagnostics retain all supported sensor bands on a
-    separate ``qa_band`` axis. Only ``selected_bands`` contributes to the
-    inversion-exclusion mask.
+    QF4 bit 4 (AOT quality) and the per-band overall surface-reflectance
+    quality bits in QF5-QF6 are intentionally not inversion exclusions.
+    Those retrieval-quality flags are systematically set over snow even when
+    the reflectance values remain finite and suitable for snow inversion.
     """
     selected = normalize_viirs_band_names(
         list(VIIRS_ANALYSIS_BANDS) if selected_bands is None else list(selected_bands)
@@ -99,12 +83,9 @@ def decode_viirs_qa_masks(
     qa_bytes = {
         "qf3": qa_qf3,
         "qf4": qa_qf4,
-        "qf5": qa_qf5,
-        "qf6": qa_qf6,
     }
 
     cloud_confidence = _extract_bits(qa_qf1, start_bit=2, width=2)
-    cloud_mask_quality = _extract_bits(qa_qf1, start_bit=0, width=2)
 
     qf2_shadow = _extract_bits(qa_qf2, start_bit=3).astype(bool)
     qf2_snow_ice = _extract_bits(qa_qf2, start_bit=5).astype(bool)
@@ -126,24 +107,15 @@ def decode_viirs_qa_masks(
     mask_snow = (qf2_snow_ice | qf7_snow_present).astype(bool)
 
     bad_sdr_input = _decode_per_band_flags(qa_bytes, VIIRS_BAD_SDR_INPUT_BITS)
-    bad_surface_reflectance = _decode_per_band_flags(
-        qa_bytes,
-        VIIRS_BAD_SURFACE_REFLECTANCE_BITS,
-    )
     selected_bad_sdr_input = bad_sdr_input.sel(qa_band=selected).any(dim="qa_band")
-    selected_bad_surface_reflectance = bad_surface_reflectance.sel(
-        qa_band=selected
-    ).any(dim="qa_band")
 
-    aot_quality_bad = _extract_bits(qa_qf4, start_bit=4).astype(bool)
     aot_missing = _extract_bits(qa_qf4, start_bit=5).astype(bool)
     land_aerosol_model_invalid = _extract_bits(qa_qf4, start_bit=6).astype(bool)
     precipitable_water_missing = _extract_bits(qa_qf4, start_bit=7).astype(bool)
     ozone_missing = _extract_bits(qa_qf5, start_bit=0).astype(bool)
     surface_pressure_missing = _extract_bits(qa_qf5, start_bit=1).astype(bool)
     atmospheric_correction_inputs_bad = (
-        aot_quality_bad
-        | aot_missing
+        aot_missing
         | land_aerosol_model_invalid
         | precipitable_water_missing
         | ozone_missing
@@ -151,32 +123,11 @@ def decode_viirs_qa_masks(
     ).astype(bool)
     mask_bad_surface_reflectance_quality = (
         selected_bad_sdr_input
-        | selected_bad_surface_reflectance
         | atmospheric_correction_inputs_bad
     ).astype(bool)
 
     return xr.Dataset(
         data_vars={
-            "qa_cloud_confidence": cloud_confidence,
-            "qa_cloud_mask_quality": cloud_mask_quality,
-            "qa_thin_cirrus_reflective": qf2_thin_cirrus_reflective,
-            "qa_thin_cirrus_emissive": qf2_thin_cirrus_emissive,
-            "qa_thin_cirrus_flag": qf7_thin_cirrus,
-            "qa_adjacent_to_cloud": qf7_adjacent_to_cloud,
-            "qa_shadow_flag": qf2_shadow,
-            "qa_snow_ice_flag": qf2_snow_ice,
-            "qa_snow_present_flag": qf7_snow_present,
-            "qa_bad_sdr_input": bad_sdr_input,
-            "qa_bad_surface_reflectance": bad_surface_reflectance,
-            "qa_selected_bad_sdr_input": selected_bad_sdr_input,
-            "qa_selected_bad_surface_reflectance": selected_bad_surface_reflectance,
-            "qa_aot_quality_bad": aot_quality_bad,
-            "qa_aot_missing": aot_missing,
-            "qa_land_aerosol_model_invalid": land_aerosol_model_invalid,
-            "qa_precipitable_water_missing": precipitable_water_missing,
-            "qa_ozone_missing": ozone_missing,
-            "qa_surface_pressure_missing": surface_pressure_missing,
-            "qa_atmospheric_correction_inputs_bad": atmospheric_correction_inputs_bad,
             "mask_cloud_qa": mask_cloud,
             "mask_cloud_shadow_qa": mask_cloud_shadow,
             "mask_snow_qa": mask_snow,
