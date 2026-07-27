@@ -183,6 +183,7 @@ The mask policy is recorded as `valid_inversion_mask_applied` on
 `cluster_label`. The corresponding configuration option is
 `inversion.apply_valid_inversion_mask`, which defaults to `true`.
 
-Clustering currently materializes scene arrays in memory. Cluster-to-inversion
-handoff and scattering are deferred; postprocessing continues to evaluate
-pixel-level illumination after inversion products have been scattered.
+Clustering currently materializes scene arrays in memory. Pass the returned
+object to `spires_inversion.invert()` for automatic representative inversion
+and spatial scattering. Postprocessing continues to evaluate pixel-level
+illumination after inversion products have been scattered.

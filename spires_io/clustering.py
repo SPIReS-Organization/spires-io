@@ -235,8 +235,13 @@ def cluster_spectra_rows(
         valid_arrays[feature] = values
         key_parts.append(_quantize(_as_2d(values), tolerances[feature]))
 
-    key_matrix = np.concatenate(key_parts, axis=1)
+    key_matrix = (
+        key_parts[0]
+        if len(key_parts) == 1
+        else np.concatenate(key_parts, axis=1)
+    )
     representative_indices, inverse_indices, counts = _row_unique_inverse(key_matrix)
+    del key_matrix, key_parts
     n_clusters = int(counts.size)
     representatives = _representative_values(
         valid_arrays,
@@ -392,8 +397,15 @@ def _attach_inversion_payload_representatives(
         "solar_zenith": np.asarray(solar_zenith, dtype=np.float32).reshape(-1, 1),
     }
     representatives: dict[str, np.ndarray] = {}
+    existing = {
+        "reflectance": clustered.representative_reflectance,
+        "background": clustered.representative_background,
+        "solar_zenith": clustered.representative_solar_zenith,
+    }
     for name, values in payload.items():
-        if clustered.n_valid == 0:
+        if existing[name] is not None:
+            representative = existing[name]
+        elif clustered.n_valid == 0:
             representative = np.empty((0, values.shape[1]), dtype=np.float32)
         elif clustered.representative_method == "first_pixel":
             representative = values[clustered.representative_indices]
@@ -754,8 +766,13 @@ def _cluster_means(
     n_clusters: int,
     counts: np.ndarray,
 ) -> np.ndarray:
-    means = np.zeros((n_clusters, values.shape[1]), dtype=np.float64)
-    np.add.at(means, inverse_indices, values)
+    means = np.empty((n_clusters, values.shape[1]), dtype=np.float64)
+    for column in range(values.shape[1]):
+        means[:, column] = np.bincount(
+            inverse_indices,
+            weights=values[:, column],
+            minlength=n_clusters,
+        )
     means /= counts[:, None]
     return means
 
@@ -827,7 +844,14 @@ def _as_1d_or_none(values: np.ndarray | None) -> np.ndarray | None:
 
 
 def _quantize(values: np.ndarray, tolerance: np.ndarray) -> np.ndarray:
-    return np.rint(values / tolerance).astype(np.int64, copy=False)
+    rounded = np.rint(values / tolerance)
+    minimum = np.min(rounded)
+    maximum = np.max(rounded)
+    for dtype in (np.int8, np.int16, np.int32):
+        limits = np.iinfo(dtype)
+        if minimum >= limits.min and maximum <= limits.max:
+            return rounded.astype(dtype, copy=False)
+    return rounded.astype(np.int64, copy=False)
 
 
 def _row_unique_inverse(keys: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -838,9 +862,11 @@ def _row_unique_inverse(keys: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.nd
             np.empty((0,), dtype=np.int64),
         )
 
-    packed = np.ascontiguousarray(keys).view(
-        np.dtype((np.void, keys.dtype.itemsize * keys.shape[1]))
-    ).reshape(-1)
+    packed = _pack_integer_rows(keys)
+    if packed is None:
+        packed = np.ascontiguousarray(keys).view(
+            np.dtype((np.void, keys.dtype.itemsize * keys.shape[1]))
+        ).reshape(-1)
     _, representative_indices, inverse_indices, counts = np.unique(
         packed,
         return_index=True,
@@ -848,6 +874,38 @@ def _row_unique_inverse(keys: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.nd
         return_counts=True,
     )
     return representative_indices, inverse_indices, counts
+
+
+def _pack_integer_rows(keys: np.ndarray) -> np.ndarray | None:
+    """Pack integer row keys exactly into uint64, or return None if too wide."""
+    if keys.ndim != 2 or not np.issubdtype(keys.dtype, np.integer):
+        return None
+
+    minima = np.min(keys, axis=0)
+    maxima = np.max(keys, axis=0)
+    widths = [
+        int(maximum) - int(minimum) + 1
+        for minimum, maximum in zip(minima, maxima)
+    ]
+    bits = [(width - 1).bit_length() for width in widths]
+    if sum(bits) > 64:
+        return None
+
+    packed = np.zeros(keys.shape[0], dtype=np.uint64)
+    shift = 0
+    for column, n_bits in enumerate(bits):
+        if n_bits == 0:
+            continue
+        values = keys[:, column]
+        if values.dtype.itemsize < np.dtype(np.int64).itemsize:
+            shifted = values.astype(np.int64) - int(minima[column])
+            shifted = shifted.astype(np.uint64, copy=False)
+        else:
+            minimum_uint64 = np.uint64(int(minima[column]) % (1 << 64))
+            shifted = values.astype(np.uint64) - minimum_uint64
+        packed |= shifted << np.uint64(shift)
+        shift += n_bits
+    return packed
 
 
 def _broadcast_to_shape(array: np.ndarray, shape: tuple[int, ...], name: str, dtype) -> np.ndarray:
