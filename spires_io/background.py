@@ -5,13 +5,9 @@ from pathlib import Path
 import numpy as np
 import rioxarray  # noqa: F401  # register xarray .rio accessor
 import xarray as xr
+from spires_contract.spectra import validate_background_spectra
 
 from spires_io.file_types import RASTER_SUFFIXES, XARRAY_SUFFIXES, ZARR_SUFFIXES
-
-try:
-    from spires_contract.spectra import validate_background_spectra
-except ImportError:  # pragma: no cover - contract package is optional at runtime.
-    validate_background_spectra = None
 
 
 BACKGROUND_VARIABLE_CANDIDATES = (
@@ -172,12 +168,48 @@ def _assign_target_band_coord(
     target_scene: xr.Dataset,
 ) -> xr.DataArray:
     target_band = target_scene["reflectance"].coords["band"]
+    source_values = background.coords["band"].values
+    target_values = target_band.values
+
+    source_lookup: dict[str, int] = {}
+    for index, value in enumerate(source_values):
+        key = str(value).strip().upper()
+        if key in source_lookup:
+            raise ValueError(
+                "background reflectance contains duplicate band labels: "
+                f"{source_values.tolist()}"
+            )
+        source_lookup[key] = index
+
+    target_keys = [str(value).strip().upper() for value in target_values]
+    if all(key in source_lookup for key in target_keys):
+        indices = [source_lookup[key] for key in target_keys]
+        return background.isel(band=indices).assign_coords(band=target_values)
+
+    # GeoTIFF band coordinates are positional (1..N), not sensor band names.
+    # Preserve that compatibility only when the raster already has exactly the
+    # requested number of bands; labeled master products must match by name.
+    positional = np.array_equal(
+        np.asarray(source_values),
+        np.arange(1, background.sizes["band"] + 1),
+    )
+    if positional and background.sizes["band"] == target_band.size:
+        return background.assign_coords(band=target_values)
+
+    missing = [
+        str(value)
+        for value, key in zip(target_values, target_keys)
+        if key not in source_lookup
+    ]
     if background.sizes["band"] != target_band.size:
         raise ValueError(
-            "background reflectance band count does not match the target scene "
-            f"({background.sizes['band']} != {target_band.size})"
+            "background reflectance cannot supply the selected scene bands "
+            f"{missing}; source bands are {source_values.tolist()}"
         )
-    return background.assign_coords(band=target_band.values)
+    raise ValueError(
+        "background reflectance band labels do not match the selected scene "
+        f"bands {target_values.tolist()}; source bands are {source_values.tolist()}"
+    )
 
 
 def _coords_match(
@@ -194,5 +226,4 @@ def _coords_match(
 
 
 def _validate_background_contract(background: xr.DataArray) -> None:
-    if validate_background_spectra is not None:
-        validate_background_spectra(background)
+    validate_background_spectra(background)

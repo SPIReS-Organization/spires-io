@@ -13,7 +13,7 @@ import xarray as xr
 
 from spires_io.logging_utils import log_event
 from spires_io.base import SceneMetadata, collect_attrs, normalize_path, read_scaled_array
-from spires_io.masks import load_external_mask_on_grid
+from spires_io.masks import load_external_mask_on_grid, pack_inversion_exclusions
 from spires_io.modis.bands import MODIS_PRODUCT_TO_PLATFORM, resolve_modis_inversion_bands
 from spires_io.modis.fields import (
     MODIS_1KM_GEOMETRY_FIELDS,
@@ -165,6 +165,9 @@ def _build_component_masks(
     min_obs_1km: int,
     min_obs_500m: int,
 ) -> xr.Dataset:
+    water_external_available = mask_water_external is not None
+    ice_external_available = mask_ice_external is not None
+    playa_external_available = mask_playa_external is not None
     finite_reflectance = np.isfinite(reflectance)
     mask_invalid_reflectance = ~finite_reflectance.all(dim="band")
 
@@ -210,18 +213,6 @@ def _build_component_masks(
 
     mask_bad_modland_qa = modland_qa >= 2
 
-    valid_inversion_mask = ~(
-        mask_invalid_reflectance
-        | mask_bad_geometry
-        | mask_water
-        | mask_low_observation_support
-        | mask_bad_modland_qa
-        | mask_cloud
-        | mask_cloud_shadow
-        | mask_ice_external
-        | mask_playa_external
-        | mask_low_reflectance
-    )
     valid_r0_mask = ~(
         mask_invalid_reflectance
         | mask_bad_geometry
@@ -234,7 +225,7 @@ def _build_component_masks(
         | mask_snow
     )
 
-    return xr.Dataset(
+    components = xr.Dataset(
         data_vars={
             "mask_invalid_reflectance": mask_invalid_reflectance.astype(bool),
             "mask_bad_geometry": mask_bad_geometry.astype(bool),
@@ -249,10 +240,44 @@ def _build_component_masks(
             "mask_ice_external": mask_ice_external.astype(bool),
             "mask_playa_external": mask_playa_external.astype(bool),
             "mask_low_reflectance": mask_low_reflectance.astype(bool),
-            "valid_inversion_mask": valid_inversion_mask.astype(bool),
             "valid_r0_mask": valid_r0_mask.astype(bool),
         }
     )
+    known = xr.ones_like(false_mask, dtype=bool)
+    unknown = xr.zeros_like(false_mask, dtype=bool)
+    packed = pack_inversion_exclusions(
+        {
+            "invalid_reflectance": mask_invalid_reflectance,
+            "invalid_geometry": mask_bad_geometry,
+            "insufficient_observations": mask_low_observation_support,
+            "poor_surface_reflectance_quality": mask_bad_modland_qa,
+            "cloud": mask_cloud,
+            "cloud_shadow": mask_cloud_shadow,
+            "water": mask_water,
+            "ice": mask_ice_external,
+            "playa": mask_playa_external,
+            "low_reflectance": mask_low_reflectance,
+        },
+        assessed={
+            "invalid_reflectance": known,
+            "invalid_geometry": known,
+            "insufficient_observations": known,
+            "poor_surface_reflectance_quality": known,
+            "cloud": known,
+            "cloud_shadow": known,
+            "water": known
+            if mask_water_using_reflectance_qf or water_external_available
+            else unknown,
+            "ice": known if ice_external_available else unknown,
+            "playa": known if playa_external_available else unknown,
+            "low_reflectance": known
+            if mask_low_reflectance_for_inversion
+            else unknown,
+        },
+        reference=false_mask,
+    )
+    components.update(packed)
+    return components
 
 
 def open_modis_surface_reflectance(
@@ -386,9 +411,14 @@ def prepare_modis_scene_for_inversion(
     mask_water_using_external_file: bool = True,
     mask_low_reflectance_for_inversion: bool = False,
     low_reflectance_threshold: float = 0.1,
-    write_detailed_masks: bool = False,
 ) -> xr.Dataset:
-    """Prepare a MODIS scene on a single 500 m analysis grid for inversion."""
+    """Prepare a MODIS scene on a single 500 m analysis grid for inversion.
+
+    When ``mask_low_reflectance_for_inversion`` is enabled, the
+    contract-defined ``low_reflectance`` exclusion is true only where every
+    selected inversion band is below ``low_reflectance_threshold``. This is
+    an all-selected-bands reflectance test, not an NDSI screen.
+    """
     start_time = perf_counter()
     logger = logger or LOGGER
     if low_reflectance_threshold < 0:
@@ -505,7 +535,7 @@ def prepare_modis_scene_for_inversion(
         min_obs_500m=min_obs_500m,
     )
     prepared.update(mask_ds)
-    prepared = _filter_mask_outputs(prepared, write_detailed_masks=write_detailed_masks)
+    prepared = _drop_component_masks(prepared)
 
     prepared["reflectance"].attrs["selected_bands"] = selected_bands
     if lut_file is not None:
@@ -536,21 +566,13 @@ def prepare_modis_scene_for_inversion(
         mask_water_using_external_file=mask_water_using_external_file,
         mask_low_reflectance_for_inversion=mask_low_reflectance_for_inversion,
         low_reflectance_threshold=low_reflectance_threshold,
-        write_detailed_masks=write_detailed_masks,
         output_shape=list(prepared["reflectance"].shape),
         elapsed_seconds=round(perf_counter() - start_time, 6),
     )
     return prepared
 
 
-def _filter_mask_outputs(
-    prepared: xr.Dataset,
-    *,
-    write_detailed_masks: bool,
-) -> xr.Dataset:
-    if write_detailed_masks:
-        return prepared
-
+def _drop_component_masks(prepared: xr.Dataset) -> xr.Dataset:
     mask_vars = [
         name
         for name in prepared.data_vars

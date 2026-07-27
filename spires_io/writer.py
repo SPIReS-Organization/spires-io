@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from spires_io.spires_data import SpiresData
+from spires_contract import SpiresData
 
 
 @dataclass(frozen=True)

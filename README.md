@@ -6,6 +6,55 @@ MODIS / Sentinel-2 / Landsat loaders, reprojection, and coordinate transforms.
 Produces target/background reflectance spectra and solar angles that conform to
 the I/O→inversion boundary defined in
 [`spires-contract`](https://github.com/SPIReS-Organization/spires-contract).
+The package imports and re-exports the neutral `SpiresData` container from
+`spires-contract`; loading, masking, and clustering remain package-level I/O
+operations rather than methods on that shared object.
+
+```python
+import spires_io
+
+data = spires_io.load("config.json")
+data = spires_io.cluster(data, features=("reflectance", "solar_zenith"))
+```
+
+## Inversion-exclusion provenance
+
+Prepared MODIS and VIIRS scenes store inversion exclusions in the canonical
+`uint16` pair `inversion_exclusion_flags` and
+`inversion_exclusion_assessed`, together with `valid_inversion_mask`. Use
+`decode_inversion_exclusions()` to regenerate Boolean reason and assessed-state
+masks. `write_detailed_masks` has been removed because the packed pair is the
+lossless, canonical representation.
+
+For VIIRS, all QF1-QF7 bytes are read even when reflectance is down-selected.
+QF3-QF6 band-specific SDR-input and surface-reflectance-quality flags are
+decoded for every supported reflective band on the separate `qa_band`
+coordinate. A pixel receives the `poor_surface_reflectance_quality` exclusion
+when any selected band is flagged, or when a required atmospheric-correction
+input is bad or missing. Flags belonging only to unselected bands remain
+available as diagnostics but do not exclude the pixel.
+
+## Master products and band selection
+
+`sensor.selected_bands` is the explicit, ordered down-selection for a sensor
+master LUT and other all-band inputs:
+
+```json
+{
+  "sensor": {
+    "name": "viirs",
+    "selected_bands": ["I1", "I2", "M4", "M7"]
+  }
+}
+```
+
+The prepared scene preserves this order in its `band` coordinate. Labeled
+all-band background products are selected and reordered to match it, and
+downstream `spires-inversion` should use that coordinate to select the same
+bands from the numerical reflectance LUT. `spires-io` does not load LUT
+values. While legacy MATLAB LUTs remain supported, omitting
+`sensor.selected_bands` still allows their metadata or filename to provide a
+transitional band selection; explicit configuration always takes precedence.
 
 ## Postprocessing inputs
 
@@ -95,11 +144,28 @@ nonempty feature subset is supported, including scalar-only selections:
 }
 ```
 
-Only selected features determine grouping and finite-value eligibility. The
-clustered scene includes `cluster_representative_cosine_illumination` when that
-feature is selected. Configured loading requires derivable illumination
-geometry only when clustering is enabled and the feature is selected; a direct
-`SpiresData.cluster()` request raises `ValueError` if it is absent.
+Only selected features determine grouping. Reflectance, background, and solar
+zenith remain required inversion payloads: their finite values determine basic
+eligibility and their representatives are always emitted. The clustered scene
+includes `cluster_representative_cosine_illumination` when that feature is
+selected. Configured loading requires derivable illumination geometry only
+when clustering is enabled and the feature is selected.
+
+Clustering is explicit and does not run during loading:
+
+```python
+from spires_io import cluster
+
+clustered = cluster(
+    data,
+    **config.clustering.to_cluster_kwargs(),
+    apply_valid_inversion_mask=config.inversion.apply_valid_inversion_mask,
+)
+```
+
+The mask policy is recorded as `valid_inversion_mask_applied` on
+`cluster_label`. The corresponding configuration option is
+`inversion.apply_valid_inversion_mask`, which defaults to `true`.
 
 Clustering currently materializes scene arrays in memory. Cluster-to-inversion
 handoff and scattering are deferred; postprocessing continues to evaluate

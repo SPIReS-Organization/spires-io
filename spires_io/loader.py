@@ -5,6 +5,11 @@ from pathlib import Path
 from typing import Any
 
 import xarray as xr
+from spires_contract import (
+    SpiresData,
+    validate_spatial_alignment,
+    validate_spires_data,
+)
 
 from spires_io.api import prepare_scene_for_inversion
 from spires_io.ancillary import load_ancillary_layers
@@ -16,14 +21,18 @@ from spires_io.configs import (
 )
 from spires_io.geometry import add_illumination_geometry
 import spires_io.constants as constants
-from spires_io.masks import load_external_mask
-from spires_io.spires_data import SpiresData
+from spires_io.masks import assign_inversion_exclusion_masks, load_external_mask
 
 
 ScenePreparer = Callable[..., xr.Dataset]
 BackgroundLoader = Callable[..., xr.DataArray | None]
 AncillaryLoader = Callable[..., xr.Dataset | None]
 MaskLoader = Callable[..., xr.DataArray]
+
+
+def load(config_file: str | Path) -> SpiresData:
+    """Load one configured scene into the shared ``SpiresData`` container."""
+    return SpiresDataLoader.from_config(config_file).load()
 
 
 class SpiresDataLoader:
@@ -68,7 +77,9 @@ class SpiresDataLoader:
     def load(self) -> SpiresData:
         """Load the configured single scene."""
         if self.single_scene_config is None:
-            raise ValueError("load() requires a single-scene config; use load_item() for manifests")
+            raise ValueError(
+                "load() requires a single-scene config; use load_item() for manifests"
+            )
 
         config = self.single_scene_config
         scene = self._scene_preparer(
@@ -86,12 +97,7 @@ class SpiresDataLoader:
             ancillary,
             require_illumination=_requires_illumination_geometry(config),
         )
-        return SpiresData.from_scene(
-            scene,
-            background=background,
-            ancillary=ancillary,
-            cluster_defaults=config.clustering.to_cluster_kwargs(),
-        )
+        return _build_spires_data(scene, background=background, ancillary=ancillary)
 
     def load_item(self, item: SceneManifestItem | Mapping[str, Any]) -> SpiresData:
         """Load one scene manifest item using this loader's run-wide policy."""
@@ -113,13 +119,26 @@ class SpiresDataLoader:
             ancillary,
             require_illumination=_requires_illumination_geometry(self.run_config),
         )
-        data = SpiresData.from_scene(
-            scene,
-            background=background,
-            ancillary=ancillary,
-            cluster_defaults=self.run_config.clustering.to_cluster_kwargs(),
-        )
+        data = _build_spires_data(scene, background=background, ancillary=ancillary)
         return _assign_manifest_masks(data, item.masks, scene, self._mask_loader)
+
+
+def _build_spires_data(
+    scene: xr.Dataset,
+    *,
+    background: xr.DataArray | None,
+    ancillary: xr.Dataset | None,
+) -> SpiresData:
+    data = SpiresData(
+        scene=scene.copy(deep=False),
+        background=(
+            None if background is None else background.copy(deep=False)
+        ),
+        ancillary=None if ancillary is None else ancillary.copy(deep=False),
+    )
+    validate_spires_data(data)
+    validate_spatial_alignment(data)
+    return data
 
 
 def load_background_image(
@@ -218,4 +237,4 @@ def _assign_manifest_masks(
         else:
             loaded_masks[name] = mask_loader(spec, target_scene=scene)
 
-    return data.assign_masks(loaded_masks)
+    return assign_inversion_exclusion_masks(data, loaded_masks)

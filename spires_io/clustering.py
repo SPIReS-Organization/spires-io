@@ -6,6 +6,10 @@ from types import MappingProxyType
 from typing import Literal, Union
 
 import numpy as np
+import xarray as xr
+
+from spires_contract import SpiresData, validate_clusters, validate_for_inversion
+from spires_contract import conventions as contract
 
 
 FeatureName = str
@@ -77,6 +81,95 @@ class ClusteredSpectra:
     def n_valid(self) -> int:
         """Number of valid clustered samples."""
         return int(self.valid_flat_indices.size)
+
+
+def cluster(
+    data: SpiresData,
+    *,
+    features: Sequence[FeatureName] | None = None,
+    apply_valid_inversion_mask: bool = True,
+    representative_method: RepresentativeMethod = "cluster_mean",
+    reflectance_tol: Tolerance = CLUSTER_FEATURE_SPECS[
+        "reflectance"
+    ].default_tolerance,
+    background_tol: Tolerance = CLUSTER_FEATURE_SPECS[
+        "background"
+    ].default_tolerance,
+    solar_zenith_tol: Tolerance = CLUSTER_FEATURE_SPECS[
+        "solar_zenith"
+    ].default_tolerance,
+    cosine_illumination_tol: Tolerance = CLUSTER_FEATURE_SPECS[
+        "cosine_illumination"
+    ].default_tolerance,
+) -> SpiresData:
+    """Cluster one prepared scene and return a replacement ``SpiresData``.
+
+    ``features`` selects the grouping keys. Reflectance, background, and solar
+    zenith remain mandatory inversion payloads and always receive cluster
+    representatives, whether or not they participate in grouping.
+    """
+    if not isinstance(data, SpiresData):
+        raise TypeError(f"data must be SpiresData, got {type(data).__name__}")
+    if type(apply_valid_inversion_mask) is not bool:
+        raise TypeError("apply_valid_inversion_mask must be a boolean")
+    validate_for_inversion(data)
+
+    scene = data.scene
+    for name in ("reflectance", "solar_zenith"):
+        if name not in scene:
+            raise ValueError(f"scene is missing required variable {name!r}")
+
+    feature_values = {
+        "reflectance": scene["reflectance"].values,
+        "background": data.background.values,
+        "solar_zenith": scene["solar_zenith"].values,
+        "cosine_illumination": (
+            None
+            if "cosine_illumination" not in scene
+            else scene["cosine_illumination"].values
+        ),
+    }
+    payload_valid = (
+        np.isfinite(feature_values["reflectance"]).all(axis=-1)
+        & np.isfinite(feature_values["background"]).all(axis=-1)
+        & np.isfinite(feature_values["solar_zenith"])
+    )
+
+    mask_applied = bool(
+        apply_valid_inversion_mask
+        and contract.VALID_INVERSION_MASK_VARIABLE in scene.data_vars
+    )
+    if mask_applied:
+        valid_mask = _validated_scene_mask(
+            scene,
+            scene[contract.VALID_INVERSION_MASK_VARIABLE],
+        )
+        payload_valid &= np.asarray(valid_mask.values, dtype=bool)
+
+    clustered = cluster_spectra_block(
+        **feature_values,
+        features=features,
+        valid_mask=payload_valid,
+        representative_method=representative_method,
+        reflectance_tol=reflectance_tol,
+        background_tol=background_tol,
+        solar_zenith_tol=solar_zenith_tol,
+        cosine_illumination_tol=cosine_illumination_tol,
+    )
+    clustered = _attach_inversion_payload_representatives(
+        clustered,
+        reflectance=feature_values["reflectance"],
+        background=feature_values["background"],
+        solar_zenith=feature_values["solar_zenith"],
+    )
+    clustered_scene = _assign_cluster_outputs(
+        scene,
+        clustered,
+        valid_inversion_mask_applied=mask_applied,
+    )
+    result = data.assign_scene(clustered_scene)
+    validate_clusters(result)
+    return result
 
 
 def cluster_spectra_rows(
@@ -280,6 +373,150 @@ def scatter_cluster_results_block(
     flat = scatter_cluster_results(clustered, cluster_results, fill_value=fill_value)
     sample_shape = clustered.original_shape[:-1]
     return flat.reshape(sample_shape + (flat.shape[-1],))
+
+
+def _attach_inversion_payload_representatives(
+    clustered: ClusteredSpectra,
+    *,
+    reflectance: np.ndarray,
+    background: np.ndarray,
+    solar_zenith: np.ndarray,
+) -> ClusteredSpectra:
+    payload = {
+        "reflectance": np.asarray(reflectance, dtype=np.float32).reshape(
+            -1, np.shape(reflectance)[-1]
+        ),
+        "background": np.asarray(background, dtype=np.float32).reshape(
+            -1, np.shape(background)[-1]
+        ),
+        "solar_zenith": np.asarray(solar_zenith, dtype=np.float32).reshape(-1, 1),
+    }
+    representatives: dict[str, np.ndarray] = {}
+    for name, values in payload.items():
+        if clustered.n_valid == 0:
+            representative = np.empty((0, values.shape[1]), dtype=np.float32)
+        elif clustered.representative_method == "first_pixel":
+            representative = values[clustered.representative_indices]
+        else:
+            representative = _cluster_means(
+                values[clustered.valid_flat_indices],
+                clustered.inverse_indices,
+                clustered.n_clusters,
+                clustered.counts,
+            )
+        representatives[name] = np.ascontiguousarray(
+            representative,
+            dtype=np.float32,
+        )
+
+    return replace(
+        clustered,
+        representative_reflectance=representatives["reflectance"],
+        representative_background=representatives["background"],
+        representative_solar_zenith=_as_1d_or_none(
+            representatives["solar_zenith"]
+        ),
+    )
+
+
+def _assign_cluster_outputs(
+    scene: xr.Dataset,
+    clustered: ClusteredSpectra,
+    *,
+    valid_inversion_mask_applied: bool,
+) -> xr.Dataset:
+    known_cluster_variables = (
+        contract.REQUIRED_CLUSTER_VARIABLES + contract.OPTIONAL_CLUSTER_VARIABLES
+    )
+    updated = scene.drop_vars(known_cluster_variables, errors="ignore").copy(deep=False)
+    cluster_coord = np.arange(clustered.n_clusters, dtype=np.int64)
+    spatial_shape = tuple(updated.sizes[dim] for dim in contract.SPATIAL_DIMS)
+
+    labels = np.full(spatial_shape, contract.CLUSTER_LABEL_SENTINEL, dtype=np.int64)
+    flat_labels = labels.reshape(-1)
+    if clustered.n_valid > 0:
+        flat_labels[clustered.valid_flat_indices] = clustered.inverse_indices
+
+    label_attrs = _cluster_attrs(clustered)
+    label_attrs[contract.CLUSTER_MASK_POLICY_ATTR] = bool(
+        valid_inversion_mask_applied
+    )
+    updated[contract.CLUSTER_LABEL_VARIABLE] = xr.DataArray(
+        labels,
+        dims=contract.CLUSTER_LABEL_DIMS,
+        coords={dim: updated.coords[dim] for dim in contract.SPATIAL_DIMS},
+        name=contract.CLUSTER_LABEL_VARIABLE,
+        attrs=label_attrs,
+    )
+    updated[contract.CLUSTER_COUNT_VARIABLE] = xr.DataArray(
+        clustered.counts.astype(np.int64, copy=False),
+        dims=contract.CLUSTER_DIMS,
+        coords={contract.CLUSTER_DIM: cluster_coord},
+        name=contract.CLUSTER_COUNT_VARIABLE,
+        attrs=_cluster_attrs(clustered),
+    )
+
+    representatives = {
+        "reflectance": clustered.representative_reflectance,
+        "background": clustered.representative_background,
+        "solar_zenith": clustered.representative_solar_zenith,
+        "cosine_illumination": clustered.representative_cosine_illumination,
+    }
+    for feature, representative in representatives.items():
+        if representative is None:
+            continue
+        spec = CLUSTER_FEATURE_SPECS[feature]
+        spectral = spec.kind == "spectral"
+        coords = {contract.CLUSTER_DIM: cluster_coord}
+        if spectral:
+            coords["band"] = updated.coords["band"]
+        attrs = _cluster_attrs(clustered)
+        if spec.representative_long_name is not None:
+            attrs["long_name"] = spec.representative_long_name
+        if spec.units is not None:
+            attrs["units"] = spec.units
+        variable_name = f"cluster_representative_{feature}"
+        updated[variable_name] = xr.DataArray(
+            np.asarray(representative, dtype=np.float32),
+            dims=(contract.CLUSTER_DIM, "band") if spectral else contract.CLUSTER_DIMS,
+            coords=coords,
+            name=variable_name,
+            attrs=attrs,
+        )
+    return updated
+
+
+def _cluster_attrs(clustered: ClusteredSpectra) -> dict[str, str]:
+    attrs = {
+        "features": ",".join(clustered.features),
+        "representative_method": clustered.representative_method,
+    }
+    for feature in CLUSTER_FEATURE_SPECS:
+        tolerance = getattr(clustered, f"{feature}_tol")
+        if tolerance is not None:
+            attrs[f"{feature}_tol"] = ",".join(f"{value:g}" for value in tolerance)
+    return attrs
+
+
+def _validated_scene_mask(
+    scene: xr.Dataset,
+    valid_mask: xr.DataArray,
+) -> xr.DataArray:
+    if tuple(valid_mask.dims) != contract.SPATIAL_DIMS:
+        raise ValueError(
+            "valid_inversion_mask must have dims "
+            f"{contract.SPATIAL_DIMS!r}"
+        )
+    for dim in contract.SPATIAL_DIMS:
+        if dim not in valid_mask.coords or dim not in scene.coords:
+            raise ValueError(
+                f"valid_inversion_mask and scene must carry coordinate {dim!r}"
+            )
+        if not np.array_equal(valid_mask.coords[dim], scene.coords[dim]):
+            raise ValueError(
+                f"valid_inversion_mask coordinate {dim!r} does not match scene"
+            )
+    return valid_mask.astype(bool)
 
 
 def _normalize_features(features: Sequence[FeatureName] | None) -> tuple[FeatureName, ...]:
