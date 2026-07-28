@@ -150,6 +150,14 @@ def _normalize_external_mask_dataarray(
     target_x: xr.DataArray,
     target_y: xr.DataArray,
 ) -> xr.DataArray:
+    if "band" in data_array.dims:
+        if data_array.sizes["band"] != 1:
+            raise ValueError(
+                "External mask rasters must have exactly one band; "
+                f"got {data_array.sizes['band']}"
+            )
+        data_array = data_array.isel(band=0, drop=True)
+
     rename_map = {}
     if "y_500m" in data_array.dims:
         rename_map["y_500m"] = "y"
@@ -160,7 +168,21 @@ def _normalize_external_mask_dataarray(
     if normalized.dims != ("y", "x"):
         raise ValueError(f"External mask must have dims ('y', 'x') or ('y_500m', 'x_500m'); got {normalized.dims}")
 
-    normalized = normalized.assign_coords(y=target_y.values, x=target_x.values)
+    target_sizes = {"y": target_y.size, "x": target_x.size}
+    if any(normalized.sizes[dim] != target_sizes[dim] for dim in ("y", "x")):
+        if "y" not in normalized.coords or "x" not in normalized.coords:
+            raise ValueError(
+                "External mask grid differs from the target grid and does not "
+                "provide x/y coordinates for nearest-neighbor alignment"
+            )
+        normalized = normalized.interp(
+            y=target_y.values,
+            x=target_x.values,
+            method="nearest",
+            kwargs={"fill_value": "extrapolate"},
+        )
+    else:
+        normalized = normalized.assign_coords(y=target_y.values, x=target_x.values)
     return normalized.astype(bool)
 
 
@@ -195,9 +217,21 @@ def load_external_cloud_masks(
 
     try:
         if cloud_mask_var not in dataset:
-            raise ValueError(f"External cloud mask source does not contain variable {cloud_mask_var!r}")
+            data_vars = list(dataset.data_vars)
+            if len(data_vars) != 1:
+                raise ValueError(
+                    "External cloud mask source does not contain variable "
+                    f"{cloud_mask_var!r} and does not have exactly one data variable"
+                )
+            cloud_source = dataset[data_vars[0]]
+        else:
+            cloud_source = dataset[cloud_mask_var]
 
-        mask_cloud = _normalize_external_mask_dataarray(dataset[cloud_mask_var], target_x=target_x, target_y=target_y)
+        mask_cloud = _normalize_external_mask_dataarray(
+            cloud_source,
+            target_x=target_x,
+            target_y=target_y,
+        )
         if cloud_shadow_mask_var in dataset:
             mask_cloud_shadow = _normalize_external_mask_dataarray(
                 dataset[cloud_shadow_mask_var],
