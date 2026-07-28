@@ -362,24 +362,65 @@ def _validate_positive_tolerance(value: float | list[float], name: str) -> None:
 
 @dataclass
 class InversionConfig:
-    nlopt_algorithm: str = "NLOPT_LN_NELDERMEAD"
-    softmax_fractional_covers: bool = True
-    max_eval: int = 100
-    ftol_abs: float = 1e-6
-    xtol_abs: float = 1e-6
+    """User-facing controls for the high-level spires-inversion object API."""
+
+    algorithm: int = 6
+    max_eval: Optional[int] = None
+    initial_grain_radius_um: float = 250.0
     apply_valid_inversion_mask: bool = True
+    n_workers: int = 1
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.algorithm, (int, np.integer))
+            or isinstance(self.algorithm, (bool, np.bool_))
+            or self.algorithm not in range(1, 7)
+        ):
+            raise ValueError("inversion.algorithm must be an integer from 1 to 6")
+        self.algorithm = int(self.algorithm)
+
+        if self.max_eval is not None:
+            if (
+                not isinstance(self.max_eval, (int, np.integer))
+                or isinstance(self.max_eval, (bool, np.bool_))
+                or self.max_eval < 1
+            ):
+                raise ValueError("inversion.max_eval must be a positive integer")
+            self.max_eval = int(self.max_eval)
+
+        if isinstance(self.initial_grain_radius_um, (bool, np.bool_)) or not isinstance(
+            self.initial_grain_radius_um,
+            (int, float, np.integer, np.floating),
+        ):
+            raise TypeError("inversion.initial_grain_radius_um must be a real number")
+        self.initial_grain_radius_um = float(self.initial_grain_radius_um)
+        if (
+            not np.isfinite(self.initial_grain_radius_um)
+            or self.initial_grain_radius_um <= 0
+        ):
+            raise ValueError(
+                "inversion.initial_grain_radius_um must be finite and > 0"
+            )
+
         if type(self.apply_valid_inversion_mask) is not bool:
             raise TypeError("inversion.apply_valid_inversion_mask must be a boolean")
-        if self.nlopt_algorithm not in ["NLOPT_LN_NELDERMEAD", "NLOPT_LN_COBYLA"]:
-            raise ValueError("Unsupported algorithm.")
-
         if (
-            not self.softmax_fractional_covers
-            and self.nlopt_algorithm == "NLOPT_LN_NELDERMEAD"
+            not isinstance(self.n_workers, (int, np.integer))
+            or isinstance(self.n_workers, (bool, np.bool_))
+            or self.n_workers < 1
         ):
-            raise ValueError("Algorithm requires softmax_fractional_covers=True")
+            raise ValueError("inversion.n_workers must be a positive integer")
+        self.n_workers = int(self.n_workers)
+
+    def to_invert_kwargs(self) -> dict[str, Any]:
+        """Return validated keyword arguments for ``spires_inversion.invert``."""
+        return {
+            "algorithm": self.algorithm,
+            "max_eval": self.max_eval,
+            "initial_grain_radius_um": self.initial_grain_radius_um,
+            "apply_valid_inversion_mask": self.apply_valid_inversion_mask,
+            "n_workers": self.n_workers,
+        }
 
 
 @dataclass(frozen=True)

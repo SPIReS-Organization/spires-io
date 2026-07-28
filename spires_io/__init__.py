@@ -17,6 +17,7 @@ from spires_io.ancillary import load_ancillary_layer, load_ancillary_layers
 from spires_io.background import load_background_reflectance
 from spires_io.clustering import cluster
 from spires_io.configs import (
+    InversionConfig,
     MaskConfig,
     PostprocessConfig,
     SceneManifest,
@@ -41,6 +42,7 @@ __all__ = [
     "__version__",
     "SceneManifest",
     "SceneManifestItem",
+    "InversionConfig",
     "MaskConfig",
     "PostprocessConfig",
     "SpiresData",
