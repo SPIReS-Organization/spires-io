@@ -354,8 +354,8 @@ def test_prepare_viirs_scene_for_inversion_download_example(filename):
 
     assert ds["reflectance"].dims == ("y", "x", "band")
     assert ds["solar_zenith"].dims == ("y", "x")
-    assert ds["qa_raw_stack"].dims == ("y", "x", "qa_flag")
     assert ds["valid_inversion_mask"].dims == ("y", "x")
-    assert ds["valid_r0_mask"].dims == ("y", "x")
+    assert "qa_raw_stack" not in ds
+    assert not any(name.startswith("qa_") for name in ds.data_vars)
     assert list(ds["band"].values) == ["I1", "I2", "I3", "M1", "M2", "M3", "M4", "M5", "M7", "M8", "M10", "M11"]
     assert ds["reflectance"].shape[:2] == ds["solar_zenith"].shape

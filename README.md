@@ -17,6 +17,20 @@ data = spires_io.load("config.json")
 data = spires_io.cluster(data, features=("reflectance", "solar_zenith"))
 ```
 
+## Serialized SpiresData products
+
+Complete in-memory objects can be written atomically to a grouped NetCDF
+product and reconstructed for a later scientific stage:
+
+```python
+output_path = spires_io.write_spires_data(data, "prepared_scene.nc")
+restored = spires_io.read_spires_data(output_path)
+```
+
+The initial layout stores the required `scene` field and any populated
+`background`, `ancillary`, and `results` fields in matching NetCDF groups.
+Existing destinations are preserved unless overwrite is explicitly enabled.
+
 ## Inversion-exclusion provenance
 
 Prepared MODIS and VIIRS scenes store inversion exclusions in the canonical
@@ -26,13 +40,15 @@ Prepared MODIS and VIIRS scenes store inversion exclusions in the canonical
 masks. `write_detailed_masks` has been removed because the packed pair is the
 lossless, canonical representation.
 
-For VIIRS, all QF1-QF7 bytes are read even when reflectance is down-selected.
-QF3-QF6 band-specific SDR-input and surface-reflectance-quality flags are
-decoded for every supported reflective band on the separate `qa_band`
-coordinate. A pixel receives the `poor_surface_reflectance_quality` exclusion
-when any selected band is flagged, or when a required atmospheric-correction
-input is bad or missing. Flags belonging only to unselected bands remain
-available as diagnostics but do not exclude the pixel.
+For VIIRS, selected-band bad-SDR flags from QF3-QF4 and missing or invalid
+atmospheric-correction inputs from QF4-QF5 contribute to the
+`poor_surface_reflectance_quality` exclusion. QF4 AOT quality and the QF5-QF6
+overall surface-reflectance-quality bits are not inversion exclusions because
+they are systematically set over snow. QA fields are decoded transiently:
+raw, stacked, and decoded QA arrays are omitted from the prepared inversion
+scene after the SPIRES-owned `inversion_exclusion_flags`,
+`inversion_exclusion_assessed`, and `valid_inversion_mask` are constructed.
+Those three canonical mask variables remain in the prepared scene.
 
 ## Master products and band selection
 
@@ -167,6 +183,7 @@ The mask policy is recorded as `valid_inversion_mask_applied` on
 `cluster_label`. The corresponding configuration option is
 `inversion.apply_valid_inversion_mask`, which defaults to `true`.
 
-Clustering currently materializes scene arrays in memory. Cluster-to-inversion
-handoff and scattering are deferred; postprocessing continues to evaluate
-pixel-level illumination after inversion products have been scattered.
+Clustering currently materializes scene arrays in memory. Pass the returned
+object to `spires_inversion.invert()` for automatic representative inversion
+and spatial scattering. Postprocessing continues to evaluate pixel-level
+illumination after inversion products have been scattered.

@@ -34,7 +34,8 @@ from spires_io.masks import (
     load_external_mask,
     pack_inversion_exclusions,
 )
-from spires_io.writer import SpiresDataWriter
+from spires_io.spiresdata_reader import SpiresDataReader, read_spires_data
+from spires_io.spiresdata_writer import SpiresDataWriter, write_spires_data
 
 __all__ = [
     "__version__",
@@ -44,6 +45,7 @@ __all__ = [
     "PostprocessConfig",
     "SpiresData",
     "SpiresDataLoader",
+    "SpiresDataReader",
     "SpiresDataWriter",
     "SpiresRunConfig",
     "add_illumination_geometry",
@@ -64,4 +66,6 @@ __all__ = [
     "open_surface_reflectance",
     "pack_inversion_exclusions",
     "prepare_scene_for_inversion",
+    "read_spires_data",
+    "write_spires_data",
 ]

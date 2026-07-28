@@ -48,20 +48,28 @@ def test_public_api_imports():
         SceneManifest,
         SpiresData,
         SpiresDataLoader,
+        SpiresDataReader,
+        SpiresDataWriter,
         SpiresRunConfig,
         load,
         load_background_reflectance,
         prepare_scene_for_inversion,
+        read_spires_data,
+        write_spires_data,
     )
 
     assert spires_io.__version__
     assert SceneManifest is not None
     assert SpiresData is not None
     assert SpiresDataLoader is not None
+    assert SpiresDataReader is not None
+    assert SpiresDataWriter is not None
     assert SpiresRunConfig is not None
     assert callable(load)
     assert callable(load_background_reflectance)
     assert callable(prepare_scene_for_inversion)
+    assert callable(read_spires_data)
+    assert callable(write_spires_data)
 
 
 def test_minimal_single_scene_config_parses(tmp_path):
