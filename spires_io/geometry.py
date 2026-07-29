@@ -144,6 +144,9 @@ def _prepare_geometry_array(
     if data.dims != target.dims:
         raise ValueError(f"{name} must have dimensions {target.dims}; got {data.dims}")
     for dim in target.dims:
-        if dim not in data.coords or not data.coords[dim].equals(target.coords[dim]):
+        if dim not in data.coords or not np.array_equal(
+            data.coords[dim].values,
+            target.coords[dim].values,
+        ):
             raise ValueError(f"{name} coordinate {dim!r} does not match solar_zenith")
     return data
