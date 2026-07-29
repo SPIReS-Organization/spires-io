@@ -45,12 +45,10 @@ def _background(scene: xr.Dataset) -> xr.DataArray:
 def test_public_api_imports():
     import spires_io
     from spires_io import (
-        SceneManifest,
         SpiresData,
         SpiresDataLoader,
         SpiresDataReader,
         SpiresDataWriter,
-        SpiresRunConfig,
         load,
         load_background_reflectance,
         prepare_scene_for_inversion,
@@ -59,12 +57,10 @@ def test_public_api_imports():
     )
 
     assert spires_io.__version__
-    assert SceneManifest is not None
     assert SpiresData is not None
     assert SpiresDataLoader is not None
     assert SpiresDataReader is not None
     assert SpiresDataWriter is not None
-    assert SpiresRunConfig is not None
     assert callable(load)
     assert callable(load_background_reflectance)
     assert callable(prepare_scene_for_inversion)

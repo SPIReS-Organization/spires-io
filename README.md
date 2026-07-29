@@ -19,17 +19,77 @@ data = spires_io.cluster(data, features=("reflectance", "solar_zenith"))
 
 ## Serialized SpiresData products
 
-Complete in-memory objects can be written atomically to a grouped NetCDF
-product and reconstructed for a later scientific stage:
+Complete inversion and postprocessing outputs can be written atomically to a
+grouped NetCDF product and reconstructed for a later scientific stage:
 
 ```python
-output_path = spires_io.write_spires_data(data, "prepared_scene.nc")
+from spires_contract import ProductIdentity
+import spires_io
+
+identity = ProductIdentity(
+    sensor="viirs",
+    platform="noaa20",
+    product="vj109ga",
+    spatial_id="h09v04",
+    acquisition_time="2026-03-14",
+)
+output_path = spires_io.write_spires_data(
+    data,
+    "spires_vj109ga_h09v04_20260314_raw.nc",
+    identity=identity,
+    content_profile="inversion_raw",
+    product_contents="full",
+)
 restored = spires_io.read_spires_data(output_path)
 ```
 
-The initial layout stores the required `scene` field and any populated
-`background`, `ancillary`, and `results` fields in matching NetCDF groups.
-Existing destinations are preserved unless overwrite is explicitly enabled.
+The root records schema version 1 identity, completion, grid digest, package
+versions, timestamps, and provenance. The `scene`, `background`, `ancillary`,
+and `results` fields use matching NetCDF groups when present. New files use
+lossless compression and are promoted only after the temporary product has
+been reopened and validated. Existing destinations are preserved unless
+overwrite is explicit.
+
+Completion profile and stored payload are separate:
+
+- `inversion_raw` contains completed base inversion output.
+- `postprocessed_raw` contains base output plus its declared completed
+  operations.
+- `full` stores the complete inversion-ready object and results.
+- `results_subset` stores only the self-describing spatial grid, complete
+  packed QA, and results.
+
+A fused inversion/postprocessing workflow can write directly as
+`postprocessed_raw`. A piecewise workflow first writes `inversion_raw`, then
+merges derived results into an atomically replaced `postprocessed_raw` file:
+
+```python
+spires_io.update_spires_data_atomically(
+    output_path,
+    postprocessed.results,
+    completed_operations=("canopy_correction", "albedo"),
+)
+```
+
+Atomic updates retain the original identity, creation time, payload choice,
+inputs, base inversion results, valid unknown result variables, file
+permissions, and existing variable encodings. A changed base result, grid
+mismatch, validation failure, or concurrent file replacement aborts the update
+without replacing the original.
+
+Use lightweight inspection before loading scientific arrays:
+
+```python
+inspection = spires_io.inspect_spires_product(
+    output_path,
+    expected_identity=identity,
+    expected_profile="postprocessed_raw",
+)
+assert inspection.complete
+```
+
+`validate_spires_product()` supports `metadata`, `sample`, and `full`
+validation levels; `sample` is the default for writes and atomic updates.
 
 ## Inversion-exclusion provenance
 
@@ -152,9 +212,9 @@ only for an explicitly requested binary inversion-exclusion mask. In particular,
 an RGI fractional-ice raster should be configured as `files.ice_fraction`, not
 `files.ice_mask`.
 
-For scene manifests, the corresponding paths belong in each scene's
-`ancillary` mapping. When a postprocessing operation is enabled, its required
-ancillary path is validated as the scene is dispatched.
+Batch manifests and run-wide policy belong to `spires-batch`. Batch execution
+calls the public scene, background, ancillary, mask, and persistence APIs
+directly; `spires-io` does not define a second manifest-item schema.
 
 ## Solar and terrain illumination geometry
 

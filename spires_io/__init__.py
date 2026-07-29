@@ -20,9 +20,6 @@ from spires_io.configs import (
     InversionConfig,
     MaskConfig,
     PostprocessConfig,
-    SceneManifest,
-    SceneManifestItem,
-    SpiresRunConfig,
 )
 from spires_io.geometry import (
     add_illumination_geometry,
@@ -35,21 +32,25 @@ from spires_io.masks import (
     load_external_mask,
     pack_inversion_exclusions,
 )
+from spires_io.persistence_inspection import (
+    PersistedProductInspection,
+    inspect_spires_product,
+    validate_spires_product,
+)
 from spires_io.spiresdata_reader import SpiresDataReader, read_spires_data
+from spires_io.spiresdata_update import update_spires_data_atomically
 from spires_io.spiresdata_writer import SpiresDataWriter, write_spires_data
 
 __all__ = [
     "__version__",
-    "SceneManifest",
-    "SceneManifestItem",
     "InversionConfig",
     "MaskConfig",
     "PostprocessConfig",
+    "PersistedProductInspection",
     "SpiresData",
     "SpiresDataLoader",
     "SpiresDataReader",
     "SpiresDataWriter",
-    "SpiresRunConfig",
     "add_illumination_geometry",
     "assign_inversion_exclusion_masks",
     "cluster",
@@ -68,6 +69,9 @@ __all__ = [
     "open_surface_reflectance",
     "pack_inversion_exclusions",
     "prepare_scene_for_inversion",
+    "inspect_spires_product",
     "read_spires_data",
+    "update_spires_data_atomically",
+    "validate_spires_product",
     "write_spires_data",
 ]
