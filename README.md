@@ -72,6 +72,46 @@ values. While legacy MATLAB LUTs remain supported, omitting
 `sensor.selected_bands` still allows their metadata or filename to provide a
 transitional band selection; explicit configuration always takes precedence.
 
+## Inversion runtime configuration
+
+The `inversion` section configures the high-level
+`spires_inversion.invert()` object API:
+
+```json
+{
+  "inversion": {
+    "algorithm": 6,
+    "max_eval": 200,
+    "initial_grain_radius_um": 250,
+    "apply_valid_inversion_mask": true,
+    "n_workers": 1
+  }
+}
+```
+
+`max_eval` may be omitted to use the inversion engine's algorithm-specific
+default: 200 for Algorithm 6 and 100 for Algorithms 1–5. The Algorithm 6 grain
+step is intentionally owned by `spires-inversion`; it is not a run-config
+option and is recorded in inversion-result provenance.
+
+Configuration parsing does not execute inversion. Until the top-level
+`spires` workflow wires the complete pipeline, pass the validated settings
+explicitly:
+
+```python
+from spires_io.configs import SpiresConfig
+import spires_inversion
+import spires_io
+
+config = SpiresConfig("config.json")
+data = spires_io.load("config.json")
+inverted = spires_inversion.invert(
+    data,
+    lut=config.files.lut,
+    **config.inversion.to_invert_kwargs(),
+)
+```
+
 ## Postprocessing inputs
 
 `spires-io` loads and aligns the static inputs needed by
