@@ -20,9 +20,6 @@ from spires_io.configs import (
     InversionConfig,
     MaskConfig,
     PostprocessConfig,
-    SceneManifest,
-    SceneManifestItem,
-    SpiresRunConfig,
 )
 from spires_io.geometry import (
     add_illumination_geometry,
@@ -46,8 +43,6 @@ from spires_io.spiresdata_writer import SpiresDataWriter, write_spires_data
 
 __all__ = [
     "__version__",
-    "SceneManifest",
-    "SceneManifestItem",
     "InversionConfig",
     "MaskConfig",
     "PostprocessConfig",
@@ -56,7 +51,6 @@ __all__ = [
     "SpiresDataLoader",
     "SpiresDataReader",
     "SpiresDataWriter",
-    "SpiresRunConfig",
     "add_illumination_geometry",
     "assign_inversion_exclusion_masks",
     "cluster",

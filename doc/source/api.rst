@@ -11,9 +11,6 @@ Public API exported at the package top level.
    SpiresData
    SpiresDataLoader
    SpiresDataWriter
-   SpiresRunConfig
-   SceneManifest
-   SceneManifestItem
    MaskConfig
    PostprocessConfig
    open_surface_reflectance

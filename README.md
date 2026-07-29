@@ -212,9 +212,9 @@ only for an explicitly requested binary inversion-exclusion mask. In particular,
 an RGI fractional-ice raster should be configured as `files.ice_fraction`, not
 `files.ice_mask`.
 
-For scene manifests, the corresponding paths belong in each scene's
-`ancillary` mapping. When a postprocessing operation is enabled, its required
-ancillary path is validated as the scene is dispatched.
+Batch manifests and run-wide policy belong to `spires-batch`. Batch execution
+calls the public scene, background, ancillary, mask, and persistence APIs
+directly; `spires-io` does not define a second manifest-item schema.
 
 ## Solar and terrain illumination geometry
 
