@@ -36,6 +36,7 @@ def update_spires_data_atomically(
     provenance: Mapping[str, Any] | None = None,
     package_versions: Mapping[str, str] | None = None,
     expected_identity: ProductIdentity | None = None,
+    expected_contents: str | None = None,
     validation: str = "sample",
 ) -> Path:
     """Merge postprocessing results and atomically replace one raw product.
@@ -55,6 +56,7 @@ def update_spires_data_atomically(
     inspection = validate_spires_product(
         product_path,
         expected_identity=expected_identity,
+        expected_contents=expected_contents,
         validation=validation,
     )
     metadata = inspection.metadata

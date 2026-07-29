@@ -272,7 +272,9 @@ def metadata_from_root_attrs(attrs: Mapping[str, Any]) -> PersistedProductMetada
             schema_version=schema_version,
         )
     except KeyError as exc:
-        raise ValueError(f"missing persisted-product attribute {exc.args[0]!r}") from exc
+        raise ValueError(
+            f"missing persisted-product attribute {exc.args[0]!r}"
+        ) from exc
     validate_persisted_metadata(metadata)
     return metadata
 
@@ -283,10 +285,12 @@ def spatial_grid_digest(scene: xr.Dataset) -> str:
     digest = hashlib.sha256()
     for name in contract.SPATIAL_DIMS:
         values = np.asarray(scene.coords[name].values)
+        canonical_dtype = values.dtype.newbyteorder("<")
+        canonical_values = values.astype(canonical_dtype, copy=False)
         digest.update(name.encode("utf-8"))
-        digest.update(values.dtype.str.encode("ascii"))
+        digest.update(canonical_dtype.str.encode("ascii"))
         digest.update(canonical_json(values.shape).encode("ascii"))
-        digest.update(np.ascontiguousarray(values).tobytes())
+        digest.update(np.ascontiguousarray(canonical_values).tobytes())
     spatial_ref = scene["spatial_ref"]
     crs = (
         spatial_ref.attrs.get("crs_wkt")
@@ -387,7 +391,9 @@ def parse_present_groups(value: Any) -> tuple[str, ...]:
         group for group in groups if group not in PERSISTED_GROUPS
     )
     if unknown:
-        raise ValueError(f"serialized SpiresData product lists unknown groups: {unknown}")
+        raise ValueError(
+            f"serialized SpiresData product lists unknown groups: {unknown}"
+        )
     if len(set(groups)) != len(groups):
         raise ValueError("serialized SpiresData product lists duplicate groups")
     return groups
@@ -414,7 +420,11 @@ def _encode_attr_value(value: Any) -> Any:
         return value
 
     try:
-        encoded = json.dumps(_json_compatible(value), sort_keys=True, separators=(",", ":"))
+        encoded = json.dumps(
+            _json_compatible(value),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
     except (TypeError, ValueError) as exc:
         raise TypeError(
             f"attribute value of type {type(value).__name__} is not serializable"

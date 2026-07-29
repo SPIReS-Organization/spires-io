@@ -26,6 +26,7 @@ from spires_contract import (
     ContractError,
     PersistedProductMetadata,
     ProductIdentity,
+    inversion_exclusion_metadata,
 )
 from spires_contract import conventions as contract
 
@@ -272,27 +273,43 @@ def _inspect_group_contract(root, attrs, metadata, issues):
     _require_variable(scene, "x", ("x",), None, issues)
     _require_variable(scene, "y", ("y",), None, issues)
     _require_variable(scene, "spatial_ref", (), None, issues)
-    _require_variable(
+    flags_variable = _require_variable(
         scene,
         contract.INVERSION_EXCLUSION_FLAGS_VARIABLE,
         contract.SPATIAL_DIMS,
         np.uint16,
         issues,
     )
-    _require_variable(
+    assessed_variable = _require_variable(
         scene,
         contract.INVERSION_EXCLUSION_ASSESSED_VARIABLE,
         contract.SPATIAL_DIMS,
         np.uint16,
         issues,
     )
-    _require_variable(
+    valid_variable = _require_variable(
         scene,
         contract.VALID_INVERSION_MASK_VARIABLE,
         contract.SPATIAL_DIMS,
         None,
         issues,
     )
+    for name, variable in (
+        (contract.INVERSION_EXCLUSION_FLAGS_VARIABLE, flags_variable),
+        (contract.INVERSION_EXCLUSION_ASSESSED_VARIABLE, assessed_variable),
+    ):
+        if variable is not None:
+            _inspect_qa_metadata(name, variable, issues)
+    if valid_variable is not None:
+        dtype = np.dtype(valid_variable.dtype)
+        if not (
+            np.issubdtype(dtype, np.bool_)
+            or np.issubdtype(dtype, np.integer)
+        ):
+            issues.append(
+                f"{scene.path}.{contract.VALID_INVERSION_MASK_VARIABLE} "
+                f"dtype is {dtype}, expected bool or an integer dtype"
+            )
 
     if metadata.product_contents == PRODUCT_CONTENTS_FULL:
         _require_variable(
@@ -321,6 +338,29 @@ def _inspect_group_contract(root, attrs, metadata, issues):
                 np.float32,
                 issues,
             )
+            declared_variable = background.variables.get(background_name)
+            if declared_variable is not None:
+                allowed_background_variables = {
+                    background_name,
+                    *declared_variable.dimensions,
+                }
+                coordinates = (
+                    declared_variable.getncattr("coordinates")
+                    if "coordinates" in declared_variable.ncattrs()
+                    else ""
+                )
+                if isinstance(coordinates, str):
+                    allowed_background_variables.update(coordinates.split())
+                unexpected = tuple(
+                    name
+                    for name in background.variables
+                    if name not in allowed_background_variables
+                )
+                if unexpected:
+                    issues.append(
+                        "background group contains undeclared data variables "
+                        f"{unexpected!r}"
+                    )
     else:
         allowed = {
             "x",
@@ -336,13 +376,15 @@ def _inspect_group_contract(root, attrs, metadata, issues):
 
     results = root.groups[PERSISTED_GROUP_RESULTS]
     for name in contract.RESULT_VARIABLES:
-        _require_variable(
+        variable = _require_variable(
             results,
             name,
             contract.RESULT_DIMS,
             np.float32,
             issues,
         )
+        if variable is not None:
+            _inspect_base_result_metadata(name, variable, issues)
     if metadata.content_profile == CONTENT_PROFILE_POSTPROCESSED_RAW:
         for operation in metadata.completed_operations:
             for name in OPERATION_RESULT_VARIABLES[operation]:
@@ -396,6 +438,68 @@ def _require_variable(group, name, expected_dims, expected_dtype, issues):
     return variable
 
 
+def _inspect_qa_metadata(name, variable, issues):
+    expected = inversion_exclusion_metadata(name)
+    for attribute in (
+        "long_name",
+        "flag_meanings",
+        contract.INVERSION_EXCLUSION_SCHEMA_ATTR,
+    ):
+        actual = (
+            variable.getncattr(attribute)
+            if attribute in variable.ncattrs()
+            else None
+        )
+        if actual != expected[attribute]:
+            issues.append(
+                f"scene.{name} has invalid or missing "
+                f"{attribute}"
+            )
+    actual_masks = (
+        np.asarray(variable.getncattr("flag_masks"))
+        if "flag_masks" in variable.ncattrs()
+        else None
+    )
+    if (
+        actual_masks is None
+        or actual_masks.dtype != np.dtype(np.uint16)
+        or not np.array_equal(actual_masks, expected["flag_masks"])
+    ):
+        issues.append(
+            f"scene.{name} has invalid or missing flag_masks"
+        )
+
+
+def _inspect_base_result_metadata(name, variable, issues):
+    long_name = (
+        variable.getncattr("long_name")
+        if "long_name" in variable.ncattrs()
+        else None
+    )
+    if long_name != contract.RESULT_LONG_NAMES[name]:
+        issues.append(f"results.{name} has invalid or missing long_name")
+
+    units = (
+        variable.getncattr("units")
+        if "units" in variable.ncattrs()
+        else None
+    )
+    if name == "grain_radius":
+        if units not in contract.GRAIN_RADIUS_UNIT_ALIASES:
+            issues.append(f"results.{name} has invalid or missing units")
+    elif units != contract.RESULT_UNITS[name]:
+        issues.append(f"results.{name} has invalid or missing units")
+
+    if name == "lap_concentration":
+        lap_type = (
+            variable.getncattr("lap_type")
+            if "lap_type" in variable.ncattrs()
+            else None
+        )
+        if lap_type not in contract.SUPPORTED_LAP_TYPES:
+            issues.append("results.lap_concentration has invalid lap_type")
+
+
 def _sample_value_issues(inspection):
     issues = []
     metadata = inspection.metadata
@@ -409,9 +513,10 @@ def _sample_value_issues(inspection):
         assessed = _sample_variable(
             scene.variables[contract.INVERSION_EXCLUSION_ASSESSED_VARIABLE]
         ).astype(np.uint16)
-        valid = _sample_variable(
+        valid_values = _sample_variable(
             scene.variables[contract.VALID_INVERSION_MASK_VARIABLE]
-        ).astype(bool)
+        )
+        valid = valid_values.astype(bool)
         known_mask = np.uint16(contract.INVERSION_EXCLUSION_KNOWN_MASK)
         unknown_mask = np.uint16(
             np.iinfo(np.uint16).max
@@ -423,6 +528,8 @@ def _sample_value_issues(inspection):
             issues.append("sampled QA assessed flags contain reserved or unknown bits")
         if np.any(flags & np.bitwise_and(known_mask, np.bitwise_not(assessed))):
             issues.append("sampled QA contains exclusion bits that were not assessed")
+        if np.any((valid_values != 0) & (valid_values != 1)):
+            issues.append("sampled valid-inversion mask contains values outside 0/1")
         if not np.array_equal(valid, flags == 0):
             issues.append("sampled valid-inversion mask disagrees with QA flags")
 
@@ -430,12 +537,19 @@ def _sample_value_issues(inspection):
         names = list(contract.RESULT_VARIABLES)
         for operation in metadata.completed_operations:
             names.extend(OPERATION_RESULT_VARIABLES[operation])
+        bounded_results = {
+            "fsnow",
+            "fshade",
+            "canopy_adjusted_fsnow",
+            "ice_adjusted_fsnow",
+            *ALBEDO_RESULT_VARIABLES,
+        }
         for name in names:
             values = np.asarray(_sample_variable(results.variables[name]))
             if np.issubdtype(values.dtype, np.floating) and np.any(np.isinf(values)):
                 issues.append(f"sampled results.{name} contains infinite values")
             finite = values[np.isfinite(values)]
-            if name in {"fsnow", "fshade", "canopy_adjusted_fsnow", "ice_adjusted_fsnow", *ALBEDO_RESULT_VARIABLES}:
+            if name in bounded_results:
                 if np.any((finite < 0) | (finite > 1)):
                     issues.append(
                         f"sampled results.{name} contains values outside [0, 1]"

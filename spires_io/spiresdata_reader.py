@@ -50,7 +50,10 @@ def read_spires_data(
     if BACKGROUND_GROUP in groups:
         background_dataset = _read_group(product_path, BACKGROUND_GROUP)
         variable_name = root_attrs.get(BACKGROUND_VARIABLE_ATTR)
-        if not isinstance(variable_name, str) or variable_name not in background_dataset:
+        if (
+            not isinstance(variable_name, str)
+            or variable_name not in background_dataset
+        ):
             raise ValueError(
                 "serialized SpiresData background group does not contain its "
                 "declared background variable"
