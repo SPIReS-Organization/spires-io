@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import xarray as xr
-from spires_contract import SpiresData
+from spires_contract import ProductIdentity, SpiresData
 
 from spires_io._spiresdata_netcdf import (
     ANCILLARY_GROUP,
@@ -14,12 +14,9 @@ from spires_io._spiresdata_netcdf import (
     BACKGROUND_VARIABLE_ATTR,
     NETCDF_ENGINE,
     PRESENT_GROUPS_ATTR,
-    PRODUCT_TYPE,
-    PRODUCT_TYPE_ATTR,
     RESULTS_GROUP,
     SCENE_GROUP,
-    STORAGE_SCHEMA_ATTR,
-    STORAGE_SCHEMA_VERSION,
+    metadata_from_root_attrs,
     parse_present_groups,
     restore_dataset_attrs,
     validate_product_data,
@@ -29,11 +26,23 @@ from spires_io._spiresdata_netcdf import (
 __all__ = ["SpiresDataReader", "read_spires_data"]
 
 
-def read_spires_data(path: str | Path) -> SpiresData:
+def read_spires_data(
+    path: str | Path,
+    *,
+    expected_identity: ProductIdentity | None = None,
+    expected_profile: str | None = None,
+    expected_contents: str | None = None,
+) -> SpiresData:
     """Load and validate one serialized ``SpiresData`` NetCDF product."""
     product_path = validate_product_path(path)
     root_attrs = _read_root_attrs(product_path)
-    _validate_root_attrs(root_attrs)
+    metadata = metadata_from_root_attrs(root_attrs)
+    _validate_expected_metadata(
+        metadata,
+        expected_identity=expected_identity,
+        expected_profile=expected_profile,
+        expected_contents=expected_contents,
+    )
     groups = parse_present_groups(root_attrs[PRESENT_GROUPS_ATTR])
 
     scene = _read_group(product_path, SCENE_GROUP)
@@ -65,7 +74,7 @@ def read_spires_data(path: str | Path) -> SpiresData:
         ancillary=ancillary,
         results=results,
     )
-    validate_product_data(data)
+    validate_product_data(data, metadata)
     return data
 
 
@@ -99,19 +108,31 @@ def _read_group(path: Path, group: str) -> xr.Dataset:
     return restore_dataset_attrs(loaded)
 
 
-def _validate_root_attrs(attrs: dict[str, object]) -> None:
-    if attrs.get(PRODUCT_TYPE_ATTR) != PRODUCT_TYPE:
+def _validate_expected_metadata(
+    metadata,
+    *,
+    expected_identity,
+    expected_profile,
+    expected_contents,
+) -> None:
+    if expected_identity is not None and metadata.identity != expected_identity:
         raise ValueError(
-            f"file is not a serialized {PRODUCT_TYPE} product: "
-            f"{PRODUCT_TYPE_ATTR!r} is missing or invalid"
+            "persisted product identity does not match expected identity: "
+            f"found {metadata.identity!r}, expected {expected_identity!r}"
         )
-    version = attrs.get(STORAGE_SCHEMA_ATTR)
-    if str(version) != STORAGE_SCHEMA_VERSION:
+    if (
+        expected_profile is not None
+        and metadata.content_profile != expected_profile
+    ):
         raise ValueError(
-            "unsupported serialized SpiresData schema version: "
-            f"found {version!r}, expected {STORAGE_SCHEMA_VERSION!r}"
+            f"persisted product profile is {metadata.content_profile!r}, "
+            f"expected {expected_profile!r}"
         )
-    if PRESENT_GROUPS_ATTR not in attrs:
+    if (
+        expected_contents is not None
+        and metadata.product_contents != expected_contents
+    ):
         raise ValueError(
-            f"serialized SpiresData product is missing {PRESENT_GROUPS_ATTR!r}"
+            f"persisted product contents are {metadata.product_contents!r}, "
+            f"expected {expected_contents!r}"
         )
