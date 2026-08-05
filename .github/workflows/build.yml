@@ -27,12 +27,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install family deps not yet on PyPI
-        # Phase C is coordinated with the unmerged contract persistence work.
-        # Replace this temporary branch reference with main or a reviewed
-        # release tag after the component PRs merge.
+        # The batch persistence contract is merged on the component's main
+        # branch but is not yet available from PyPI.
         run: |
           python -m pip install --upgrade pip
-          pip install "spires-contract @ git+https://github.com/SPIReS-Organization/spires-contract.git@batch-support"
+          pip install "spires-contract @ git+https://github.com/SPIReS-Organization/spires-contract.git@main"
 
       - name: Install package + test deps
         run: pip install ".[test]"
