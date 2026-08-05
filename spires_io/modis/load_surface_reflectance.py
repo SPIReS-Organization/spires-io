@@ -402,6 +402,7 @@ def prepare_modis_scene_for_inversion(
     playa_mask_source: str | Path | xr.Dataset | xr.DataArray | None = None,
     playa_mask_var: str | None = None,
     keep_intermediate_reflectance: bool = False,
+    keep_r0_masks: bool = False,
     max_sensor_zenith: float = 65.0,
     max_solar_zenith: float = 85.0,
     min_obs_1km: int = 1,
@@ -535,7 +536,10 @@ def prepare_modis_scene_for_inversion(
         min_obs_500m=min_obs_500m,
     )
     prepared.update(mask_ds)
-    prepared = _drop_component_masks(prepared)
+    prepared = _drop_component_masks(
+        prepared,
+        keep_r0_masks=keep_r0_masks,
+    )
 
     prepared["reflectance"].attrs["selected_bands"] = selected_bands
     if lut_file is not None:
@@ -562,6 +566,7 @@ def prepare_modis_scene_for_inversion(
         ice_mask_source=str(ice_mask_source) if isinstance(ice_mask_source, (str, Path)) else type(ice_mask_source).__name__ if ice_mask_source is not None else None,
         playa_mask_source=str(playa_mask_source) if isinstance(playa_mask_source, (str, Path)) else type(playa_mask_source).__name__ if playa_mask_source is not None else None,
         keep_intermediate_reflectance=keep_intermediate_reflectance,
+        keep_r0_masks=keep_r0_masks,
         mask_water_using_reflectance_qf=mask_water_using_reflectance_qf,
         mask_water_using_external_file=mask_water_using_external_file,
         mask_low_reflectance_for_inversion=mask_low_reflectance_for_inversion,
@@ -572,10 +577,18 @@ def prepare_modis_scene_for_inversion(
     return prepared
 
 
-def _drop_component_masks(prepared: xr.Dataset) -> xr.Dataset:
+def _drop_component_masks(
+    prepared: xr.Dataset,
+    *,
+    keep_r0_masks: bool = False,
+) -> xr.Dataset:
+    retained = {"valid_r0_mask", "mask_water"} if keep_r0_masks else set()
     mask_vars = [
         name
         for name in prepared.data_vars
-        if name.startswith("mask_") or name == "valid_r0_mask"
+        if (
+            name.startswith("mask_") or name == "valid_r0_mask"
+        )
+        and name not in retained
     ]
     return prepared.drop_vars(mask_vars)
