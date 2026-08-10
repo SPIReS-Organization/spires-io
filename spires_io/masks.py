@@ -18,6 +18,61 @@ from spires_contract import conventions as contract
 from spires_io.file_types import RASTER_SUFFIXES, XARRAY_SUFFIXES, ZARR_SUFFIXES
 
 
+CLOUD_MASK_SOURCE_POLICIES = (
+    "external_only",
+    "qa_only",
+    "qa_or_external",
+    "none",
+)
+CLOUD_MASK_APPLICATION_STAGES = (
+    "pre_inversion",
+    "post_inversion",
+)
+
+
+def select_cloud_masks(
+    qa_cloud: xr.DataArray,
+    qa_cloud_shadow: xr.DataArray,
+    *,
+    external_cloud: xr.DataArray | None = None,
+    external_cloud_shadow: xr.DataArray | None = None,
+    source_policy: str = "qa_or_external",
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Select the authoritative cloud and cloud-shadow masks."""
+    if source_policy not in CLOUD_MASK_SOURCE_POLICIES:
+        raise ValueError(
+            "cloud_mask_source_policy must be one of "
+            f"{CLOUD_MASK_SOURCE_POLICIES!r}"
+        )
+
+    false_cloud = xr.zeros_like(qa_cloud, dtype=bool)
+    false_shadow = xr.zeros_like(qa_cloud_shadow, dtype=bool)
+    if source_policy == "none":
+        return false_cloud, false_shadow
+    if source_policy == "qa_only":
+        return qa_cloud.astype(bool), qa_cloud_shadow.astype(bool)
+    if source_policy == "external_only":
+        if external_cloud is None:
+            raise ValueError(
+                "cloud_mask_source_policy='external_only' requires an external "
+                "cloud_mask_source"
+            )
+        return (
+            external_cloud.astype(bool),
+            false_shadow
+            if external_cloud_shadow is None
+            else external_cloud_shadow.astype(bool),
+        )
+
+    cloud = qa_cloud.astype(bool)
+    shadow = qa_cloud_shadow.astype(bool)
+    if external_cloud is not None:
+        cloud = cloud | external_cloud.astype(bool)
+    if external_cloud_shadow is not None:
+        shadow = shadow | external_cloud_shadow.astype(bool)
+    return cloud, shadow
+
+
 def pack_inversion_exclusions(
     exclusions: Mapping[str, xr.DataArray],
     *,

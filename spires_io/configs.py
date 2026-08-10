@@ -187,6 +187,8 @@ class OptionsConfig:
 class MaskConfig:
     cloud_mask_var: str = "mask_cloud"
     cloud_shadow_mask_var: str = "mask_cloud_shadow"
+    cloud_mask_source_policy: Optional[str] = None
+    cloud_mask_application_stage: str = "pre_inversion"
     water_mask_var: Optional[str] = None
     ice_mask_var: Optional[str] = None
     playa_mask_var: Optional[str] = None
@@ -196,6 +198,22 @@ class MaskConfig:
     low_reflectance_threshold: float = 0.1
 
     def __post_init__(self) -> None:
+        if self.cloud_mask_source_policy is not None and (
+            self.cloud_mask_source_policy
+            not in {"external_only", "qa_only", "qa_or_external", "none"}
+        ):
+            raise ValueError(
+                "mask.cloud_mask_source_policy must be one of "
+                "{'external_only', 'qa_only', 'qa_or_external', 'none'}"
+            )
+        if self.cloud_mask_application_stage not in {
+            "pre_inversion",
+            "post_inversion",
+        }:
+            raise ValueError(
+                "mask.cloud_mask_application_stage must be one of "
+                "{'pre_inversion', 'post_inversion'}"
+            )
         if self.low_reflectance_threshold < 0:
             raise ValueError("low_reflectance_threshold must be >= 0")
 
@@ -203,6 +221,8 @@ class MaskConfig:
         return {
             "cloud_mask_var": self.cloud_mask_var,
             "cloud_shadow_mask_var": self.cloud_shadow_mask_var,
+            "cloud_mask_source_policy": self.cloud_mask_source_policy,
+            "cloud_mask_application_stage": self.cloud_mask_application_stage,
             "water_mask_var": self.water_mask_var,
             "ice_mask_var": self.ice_mask_var,
             "playa_mask_var": self.playa_mask_var,
@@ -457,6 +477,8 @@ MOVED_OPTION_KEYS = {
 MOVED_READER_KEYS = {
     "cloud_mask_var": "mask.cloud_mask_var",
     "cloud_shadow_mask_var": "mask.cloud_shadow_mask_var",
+    "cloud_mask_source_policy": "mask.cloud_mask_source_policy",
+    "cloud_mask_application_stage": "mask.cloud_mask_application_stage",
     "water_mask_var": "mask.water_mask_var",
     "ice_mask_var": "mask.ice_mask_var",
     "playa_mask_var": "mask.playa_mask_var",

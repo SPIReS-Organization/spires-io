@@ -13,7 +13,13 @@ import xarray as xr
 
 from spires_io.logging_utils import log_event
 from spires_io.base import SceneMetadata, collect_attrs, normalize_path, read_scaled_array
-from spires_io.masks import load_external_mask_on_grid, pack_inversion_exclusions
+from spires_io.masks import (
+    CLOUD_MASK_APPLICATION_STAGES,
+    CLOUD_MASK_SOURCE_POLICIES,
+    load_external_mask_on_grid,
+    pack_inversion_exclusions,
+    select_cloud_masks,
+)
 from spires_io.viirs.bands import (
     VIIRS_1KM_REFLECTANCE_BANDS,
     VIIRS_500M_REFLECTANCE_BANDS,
@@ -342,6 +348,7 @@ def _build_component_masks(
     mask_ice_external: xr.DataArray | None = None,
     mask_playa_external: xr.DataArray | None = None,
     *,
+    apply_cloud_exclusions: bool,
     water_mask_values: tuple[int, ...],
     mask_water_using_reflectance_qf: bool,
     mask_low_reflectance_for_inversion: bool,
@@ -435,13 +442,17 @@ def _build_component_masks(
     )
     known = xr.ones_like(false_mask, dtype=bool)
     unknown = xr.zeros_like(false_mask, dtype=bool)
+    cloud_exclusion = mask_cloud if apply_cloud_exclusions else false_mask
+    cloud_shadow_exclusion = (
+        mask_cloud_shadow if apply_cloud_exclusions else false_mask
+    )
     packed = pack_inversion_exclusions(
         {
             "invalid_reflectance": mask_invalid_reflectance,
             "invalid_geometry": mask_bad_geometry,
             "insufficient_observations": mask_low_observation_support,
-            "cloud": mask_cloud,
-            "cloud_shadow": mask_cloud_shadow,
+            "cloud": cloud_exclusion,
+            "cloud_shadow": cloud_shadow_exclusion,
             "poor_surface_reflectance_quality": (
                 mask_bad_surface_reflectance_quality
             ),
@@ -454,8 +465,8 @@ def _build_component_masks(
             "invalid_reflectance": known,
             "invalid_geometry": known,
             "insufficient_observations": known,
-            "cloud": known,
-            "cloud_shadow": known,
+            "cloud": known if apply_cloud_exclusions else unknown,
+            "cloud_shadow": known if apply_cloud_exclusions else unknown,
             "poor_surface_reflectance_quality": known,
             "water": known
             if mask_water_using_reflectance_qf or water_external_available
@@ -481,6 +492,8 @@ def prepare_viirs_scene_for_inversion(
     cloud_mask_source: str | Path | xr.Dataset | xr.DataArray | None = None,
     cloud_mask_var: str = "mask_cloud",
     cloud_shadow_mask_var: str = "mask_cloud_shadow",
+    cloud_mask_source_policy: str | None = None,
+    cloud_mask_application_stage: str = "pre_inversion",
     water_mask_source: str | Path | xr.Dataset | xr.DataArray | None = None,
     water_mask_var: str | None = None,
     ice_mask_source: str | Path | xr.Dataset | xr.DataArray | None = None,
@@ -527,6 +540,13 @@ def prepare_viirs_scene_for_inversion(
     cloud_shadow_mask_var
         Variable name to read as the cloud-shadow mask when
         ``cloud_mask_source`` is a dataset-like object.
+    cloud_mask_source_policy
+        Select ``"external_only"``, ``"qa_only"``, ``"qa_or_external"``,
+        or ``"none"`` as the authoritative cloud-mask source. If omitted,
+        use QA without an external source and external-only when one is supplied.
+    cloud_mask_application_stage
+        Apply the selected cloud mask to inversion eligibility with
+        ``"pre_inversion"`` or defer it with ``"post_inversion"``.
     keep_intermediate_reflectance
         If True, retain intermediate reflectance cubes for debugging:
         ``reflectance_500m_native`` and ``reflectance_1km_on_500m``.
@@ -557,6 +577,19 @@ def prepare_viirs_scene_for_inversion(
     """
     start_time = perf_counter()
     logger = logger or LOGGER
+    if cloud_mask_application_stage not in CLOUD_MASK_APPLICATION_STAGES:
+        raise ValueError(
+            "cloud_mask_application_stage must be one of "
+            f"{CLOUD_MASK_APPLICATION_STAGES!r}"
+        )
+    if (
+        cloud_mask_source_policy is not None
+        and cloud_mask_source_policy not in CLOUD_MASK_SOURCE_POLICIES
+    ):
+        raise ValueError(
+            "cloud_mask_source_policy must be one of "
+            f"{CLOUD_MASK_SOURCE_POLICIES!r}"
+        )
     if low_reflectance_threshold < 0:
         raise ValueError("low_reflectance_threshold must be >= 0")
 
@@ -628,9 +661,15 @@ def prepare_viirs_scene_for_inversion(
     )
     prepared.update(qa_mask_ds)
 
-    mask_cloud = prepared["mask_cloud_qa"]
-    mask_cloud_shadow = prepared["mask_cloud_shadow_qa"]
-    if cloud_mask_source is not None:
+    resolved_cloud_mask_source_policy = cloud_mask_source_policy or (
+        "external_only" if cloud_mask_source is not None else "qa_only"
+    )
+    external_cloud = None
+    external_cloud_shadow = None
+    if (
+        cloud_mask_source is not None
+        and cloud_mask_application_stage == "pre_inversion"
+    ):
         external_mask_ds = load_external_cloud_masks(
             cloud_mask_source,
             target_x=x,
@@ -639,8 +678,22 @@ def prepare_viirs_scene_for_inversion(
             cloud_shadow_mask_var=cloud_shadow_mask_var,
         )
         prepared.update(external_mask_ds)
-        mask_cloud = mask_cloud | prepared["mask_cloud_external"]
-        mask_cloud_shadow = mask_cloud_shadow | prepared["mask_cloud_shadow_external"]
+        external_cloud = prepared["mask_cloud_external"]
+        external_cloud_shadow = prepared["mask_cloud_shadow_external"]
+    if cloud_mask_application_stage == "post_inversion":
+        mask_cloud = xr.zeros_like(prepared["mask_cloud_qa"], dtype=bool)
+        mask_cloud_shadow = xr.zeros_like(
+            prepared["mask_cloud_shadow_qa"],
+            dtype=bool,
+        )
+    else:
+        mask_cloud, mask_cloud_shadow = select_cloud_masks(
+            prepared["mask_cloud_qa"],
+            prepared["mask_cloud_shadow_qa"],
+            external_cloud=external_cloud,
+            external_cloud_shadow=external_cloud_shadow,
+            source_policy=resolved_cloud_mask_source_policy,
+        )
 
     mask_snow = prepared["mask_snow_qa"]
     mask_water_external = None
@@ -685,6 +738,10 @@ def prepare_viirs_scene_for_inversion(
         mask_water_external,
         mask_ice_external,
         mask_playa_external,
+        apply_cloud_exclusions=(
+            cloud_mask_application_stage == "pre_inversion"
+            and resolved_cloud_mask_source_policy != "none"
+        ),
         water_mask_values=water_mask_values,
         mask_water_using_reflectance_qf=mask_water_using_reflectance_qf,
         mask_low_reflectance_for_inversion=mask_low_reflectance_for_inversion,
@@ -695,6 +752,8 @@ def prepare_viirs_scene_for_inversion(
         min_obs_500m=min_obs_500m,
     )
     prepared.update(mask_ds)
+    prepared.attrs["cloud_mask_source_policy"] = resolved_cloud_mask_source_policy
+    prepared.attrs["cloud_mask_application_stage"] = cloud_mask_application_stage
     prepared = _drop_component_masks(
         prepared,
         keep_r0_masks=keep_r0_masks,
@@ -723,6 +782,8 @@ def prepare_viirs_scene_for_inversion(
         selected_bands=bands,
         band_selection_source=band_selection_source,
         cloud_mask_source=str(cloud_mask_source) if isinstance(cloud_mask_source, (str, Path)) else type(cloud_mask_source).__name__ if cloud_mask_source is not None else None,
+        cloud_mask_source_policy=resolved_cloud_mask_source_policy,
+        cloud_mask_application_stage=cloud_mask_application_stage,
         water_mask_source=str(water_mask_source) if isinstance(water_mask_source, (str, Path)) else type(water_mask_source).__name__ if water_mask_source is not None else None,
         ice_mask_source=str(ice_mask_source) if isinstance(ice_mask_source, (str, Path)) else type(ice_mask_source).__name__ if ice_mask_source is not None else None,
         playa_mask_source=str(playa_mask_source) if isinstance(playa_mask_source, (str, Path)) else type(playa_mask_source).__name__ if playa_mask_source is not None else None,

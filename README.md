@@ -110,6 +110,27 @@ scene after the SPIRES-owned `inversion_exclusion_flags`,
 `inversion_exclusion_assessed`, and `valid_inversion_mask` are constructed.
 Those three canonical mask variables remain in the prepared scene.
 
+Cloud-mask provenance is controlled independently from when cloud exclusions
+are applied:
+
+```json
+{
+  "mask": {
+    "cloud_mask_source_policy": "external_only",
+    "cloud_mask_application_stage": "pre_inversion"
+  }
+}
+```
+
+The source policy accepts `external_only`, `qa_only`, `qa_or_external`, or
+`none`. An external-only policy requires `files.cloud_mask` and does not add
+native QA cloud or cloud-shadow flags. Omitting the policy restores the
+historical selection: QA-only without an external mask and external-only when
+one is supplied. The application stage accepts
+`pre_inversion` or `post_inversion`; the latter leaves cloud reasons
+unassessed in the inversion-exclusion flags so an independently persisted
+cloud mask can be applied downstream.
+
 ## Master products and band selection
 
 `sensor.selected_bands` is the explicit, ordered down-selection for a sensor
