@@ -48,6 +48,54 @@ def collect_attrs(dataset: Any) -> dict[str, Any]:
     return {}
 
 
+def collect_decoded_attrs(
+    dataset: Any,
+    *,
+    apply_scale: bool,
+    mask_fill: bool,
+    dtype: np.dtype = np.float32,
+) -> dict[str, Any]:
+    """Return metadata consistent with an array decoded by this module.
+
+    Source packing attributes describe the stored integer representation and
+    must not remain active after values have been converted to physical units.
+    Preserve those values as provenance, convert any valid range to the
+    physical domain, and remove fill metadata after fill values become NaN.
+    """
+    attrs = collect_attrs(dataset)
+    for name in ("DIMENSION_LIST", "REFERENCE_LIST", "CLASS", "NAME"):
+        attrs.pop(name, None)
+
+    if apply_scale:
+        has_scale = "scale_factor" in attrs
+        has_offset = "add_offset" in attrs
+        scale_factor = attrs.pop("scale_factor", 1.0)
+        add_offset = attrs.pop("add_offset", 0.0)
+        if has_scale:
+            attrs["source_scale_factor"] = scale_factor
+        if has_offset:
+            attrs["source_add_offset"] = add_offset
+
+        if "valid_range" in attrs:
+            source_valid_range = np.asarray(attrs["valid_range"])
+            attrs["source_valid_range"] = source_valid_range.copy()
+            physical_valid_range = source_valid_range.astype(dtype)
+            physical_valid_range *= np.asarray(scale_factor, dtype=dtype)
+            physical_valid_range += np.asarray(add_offset, dtype=dtype)
+            attrs["valid_range"] = np.sort(physical_valid_range)
+
+    if mask_fill:
+        for name in ("_FillValue", "missing_value"):
+            if name not in attrs:
+                continue
+            source_name = (
+                "source_fill_value" if name == "_FillValue" else "source_missing_value"
+            )
+            attrs[source_name] = attrs.pop(name)
+
+    return attrs
+
+
 def read_scaled_array(
     dataset: Any,
     *,

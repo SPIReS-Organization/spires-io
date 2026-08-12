@@ -12,7 +12,13 @@ import numpy as np
 import xarray as xr
 
 from spires_io.logging_utils import log_event
-from spires_io.base import SceneMetadata, collect_attrs, normalize_path, read_scaled_array
+from spires_io.base import (
+    SceneMetadata,
+    collect_attrs,
+    collect_decoded_attrs,
+    normalize_path,
+    read_scaled_array,
+)
 from spires_io.masks import (
     CLOUD_MASK_APPLICATION_STAGES,
     CLOUD_MASK_SOURCE_POLICIES,
@@ -123,7 +129,12 @@ def _open_scalar_fields(
             mask_fill=mask_fill,
             mask_valid_range=mask_valid_range,
         )
-        attrs = collect_attrs(dataset)
+        attrs = collect_decoded_attrs(
+            dataset,
+            apply_scale=apply_scale,
+            mask_fill=mask_fill,
+            dtype=array.dtype,
+        )
         result[variable_name] = xr.DataArray(
             array,
             dims=("y_1km", "x_1km") if "1km" in grid_path else ("y_500m", "x_500m"),
