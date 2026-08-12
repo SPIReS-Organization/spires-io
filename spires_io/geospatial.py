@@ -30,11 +30,20 @@ class HdfEosGridMetadata:
 
     @property
     def x_resolution(self) -> float:
+        self._validate_dimensions()
         return (self.lower_right[0] - self.upper_left[0]) / self.x_size
 
     @property
     def y_resolution(self) -> float:
+        self._validate_dimensions()
         return (self.upper_left[1] - self.lower_right[1]) / self.y_size
+
+    def _validate_dimensions(self) -> None:
+        if self.x_size <= 0 or self.y_size <= 0:
+            raise ValueError(
+                f"HDF-EOS grid {self.grid_name!r} must have positive dimensions; "
+                f"got x_size={self.x_size}, y_size={self.y_size}"
+            )
 
     @property
     def transform(self) -> Affine:
@@ -56,6 +65,21 @@ class HdfEosGridMetadata:
         return self.upper_left[1] - (
             np.arange(self.y_size, dtype=np.float64) + 0.5
         ) * self.y_resolution
+
+    def coordinates(
+        self,
+        *,
+        expected_shape: tuple[int, int] | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return canonical ``(y, x)`` pixel centers for this grid."""
+        self._validate_dimensions()
+        actual_shape = (self.y_size, self.x_size)
+        if expected_shape is not None and tuple(expected_shape) != actual_shape:
+            raise ValueError(
+                f"HDF-EOS grid {self.grid_name!r} declares shape "
+                f"{actual_shape}, but source arrays use {tuple(expected_shape)}"
+            )
+        return self.y_coords(), self.x_coords()
 
     def to_attrs(self) -> dict[str, Any]:
         return {

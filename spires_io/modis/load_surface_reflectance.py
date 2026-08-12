@@ -326,6 +326,10 @@ def open_modis_surface_reflectance(
             raise ValueError(f"Could not parse MODIS grid metadata from {path.name}")
 
         reflectance_500m, units_500m = _open_band_stack(dataset, tuple(selected_bands))
+        y_1km, x_1km = grid_metadata_1km.coordinates()
+        y_500m, x_500m = grid_metadata_500m.coordinates(
+            expected_shape=reflectance_500m.shape[:2]
+        )
 
         ds = xr.Dataset(
             data_vars={
@@ -333,18 +337,18 @@ def open_modis_surface_reflectance(
                     reflectance_500m,
                     dims=("y_500m", "x_500m", "band_500m"),
                     coords={
-                        "y_500m": grid_metadata_500m.y_coords(),
-                        "x_500m": grid_metadata_500m.x_coords(),
+                        "y_500m": y_500m,
+                        "x_500m": x_500m,
                         "band_500m": selected_bands,
                     },
                     attrs={"units_by_band": units_500m},
                 ),
             },
             coords={
-                "x_1km": grid_metadata_1km.x_coords(),
-                "y_1km": grid_metadata_1km.y_coords(),
-                "x_500m": grid_metadata_500m.x_coords(),
-                "y_500m": grid_metadata_500m.y_coords(),
+                "x_1km": x_1km,
+                "y_1km": y_1km,
+                "x_500m": x_500m,
+                "y_500m": y_500m,
                 "band_500m": selected_bands,
             },
             attrs=asdict(scene),

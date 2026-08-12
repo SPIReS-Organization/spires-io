@@ -182,10 +182,19 @@ def open_viirs_surface_reflectance(
     with h5py.File(path, "r") as hdf:
         grid_metadata_1km = parse_viirs_grid_metadata(hdf, VIIRS_1KM_GRID_NAME)
         grid_metadata_500m = parse_viirs_grid_metadata(hdf, VIIRS_500M_GRID_NAME)
-        x_1km = np.array(hdf[_coord_path(VIIRS_1KM_GRID, "XDim")][...])
-        y_1km = np.array(hdf[_coord_path(VIIRS_1KM_GRID, "YDim")][...])
-        x_500m = np.array(hdf[_coord_path(VIIRS_500M_GRID, "XDim")][...])
-        y_500m = np.array(hdf[_coord_path(VIIRS_500M_GRID, "YDim")][...])
+        if grid_metadata_1km is None or grid_metadata_500m is None:
+            raise ValueError(f"Could not parse VIIRS grid metadata from {path.name}")
+
+        source_x_1km = hdf[_coord_path(VIIRS_1KM_GRID, "XDim")]
+        source_y_1km = hdf[_coord_path(VIIRS_1KM_GRID, "YDim")]
+        source_x_500m = hdf[_coord_path(VIIRS_500M_GRID, "XDim")]
+        source_y_500m = hdf[_coord_path(VIIRS_500M_GRID, "YDim")]
+        y_1km, x_1km = grid_metadata_1km.coordinates(
+            expected_shape=(source_y_1km.size, source_x_1km.size)
+        )
+        y_500m, x_500m = grid_metadata_500m.coordinates(
+            expected_shape=(source_y_500m.size, source_x_500m.size)
+        )
 
         if selected_1km_bands:
             reflectance_1km, units_1km = _open_band_stack(hdf, VIIRS_1KM_GRID, tuple(selected_1km_bands))
@@ -266,14 +275,18 @@ def open_viirs_surface_reflectance(
 
         ds["reflectance_1km"].attrs["long_name"] = "VIIRS 1 km surface reflectance"
         ds["reflectance_500m"].attrs["long_name"] = "VIIRS 500 m surface reflectance"
-        ds["x_1km"].attrs.update(collect_attrs(hdf[_coord_path(VIIRS_1KM_GRID, "XDim")]))
-        ds["y_1km"].attrs.update(collect_attrs(hdf[_coord_path(VIIRS_1KM_GRID, "YDim")]))
-        ds["x_500m"].attrs.update(collect_attrs(hdf[_coord_path(VIIRS_500M_GRID, "XDim")]))
-        ds["y_500m"].attrs.update(collect_attrs(hdf[_coord_path(VIIRS_500M_GRID, "YDim")]))
-        if grid_metadata_1km is not None:
-            ds["reflectance_1km"].attrs.update(grid_metadata_1km.to_attrs())
-        if grid_metadata_500m is not None:
-            ds["reflectance_500m"].attrs.update(grid_metadata_500m.to_attrs())
+        for name, source_coordinate in (
+            ("x_1km", source_x_1km),
+            ("y_1km", source_y_1km),
+            ("x_500m", source_x_500m),
+            ("y_500m", source_y_500m),
+        ):
+            ds[name].attrs.update(collect_attrs(source_coordinate))
+            ds[name].attrs["coordinate_source"] = (
+                "HDF-EOS StructMetadata.0 pixel centers"
+            )
+        ds["reflectance_1km"].attrs.update(grid_metadata_1km.to_attrs())
+        ds["reflectance_500m"].attrs.update(grid_metadata_500m.to_attrs())
         ds.attrs["selected_bands"] = selected_bands
         ds.attrs["band_selection_source"] = band_selection_source
         if lut_file is not None:

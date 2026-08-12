@@ -50,6 +50,12 @@ lossless compression and are promoted only after the temporary product has
 been reopened and validated. Existing destinations are preserved unless
 overwrite is explicit.
 
+MODIS and VIIRS HDF-EOS loaders derive canonical `x` and `y` pixel centers
+from the declared grid bounds, dimensions, and resolution. Persistence
+validation requires those centers to agree with the `spatial_ref`
+`GeoTransform`; dimension-scale values that identify pixel boundaries cannot
+be persisted as coordinate centers.
+
 Completion profile and stored payload are separate:
 
 - `inversion_raw` contains completed base inversion output.
