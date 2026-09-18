@@ -22,7 +22,16 @@ def derive_illumination_geometry(
     if not isinstance(solar_zenith, xr.DataArray):
         raise TypeError("solar_zenith must be an xarray.DataArray")
 
+    valid_solar_zenith = (
+        np.isfinite(solar_zenith)
+        & (solar_zenith >= 0.0)
+        & (solar_zenith <= 90.0)
+    )
     cosine_solar_zenith = np.cos(np.deg2rad(solar_zenith))
+    cosine_solar_zenith = cosine_solar_zenith.where(valid_solar_zenith).clip(
+        min=0.0,
+        max=1.0,
+    )
     cosine_solar_zenith = cosine_solar_zenith.astype("float32").rename(
         "cosine_solar_zenith"
     )
@@ -31,6 +40,8 @@ def derive_illumination_geometry(
         "units": "1",
         "formula": "cos(deg2rad(solar_zenith))",
         "source_angle_units": "degrees",
+        "source_angle_valid_range": "0 to 90 degrees inclusive",
+        "below_horizon_handling": "NaN",
     }
 
     supplied = {

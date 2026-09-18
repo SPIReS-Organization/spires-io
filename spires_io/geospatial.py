@@ -99,7 +99,7 @@ class HdfEosGridMetadata:
 def format_geotransform(transform: Affine) -> str:
     """Return a GDAL-style GeoTransform attribute string."""
     return " ".join(
-        f"{value:.12g}"
+        f"{value:.17g}"
         for value in (
             transform.c,
             transform.a,
