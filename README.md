@@ -258,8 +258,9 @@ cosine_illumination = clip(mu_i, 0, 1)
 
 Source angles are degrees. Solar azimuth and terrain aspect use degrees
 clockwise from north in `[0, 360)`; finite solar azimuth is normalized modulo
-360. Invalid or missing geometry remains `NaN`. A flat surface therefore has
-`cosine_illumination == cosine_solar_zenith` within floating-point tolerance.
+360. Invalid, missing, or below-horizon solar zenith remains `NaN`. A flat
+surface therefore has `cosine_illumination == cosine_solar_zenith` within
+floating-point tolerance wherever both values are defined.
 The quantity describes local surface incidence only and does not model shadows
 cast by surrounding terrain.
 
