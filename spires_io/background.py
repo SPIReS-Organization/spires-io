@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import rioxarray  # noqa: F401  # register xarray .rio accessor
 import xarray as xr
+from spires_contract import validate_persisted_grid
 from spires_contract.spectra import validate_background_spectra
 
 from spires_io.file_types import RASTER_SUFFIXES, XARRAY_SUFFIXES, ZARR_SUFFIXES
@@ -89,6 +90,10 @@ def _canonicalize_background(
     target_scene: xr.Dataset | None,
 ) -> xr.DataArray:
     background = _normalize_background_dims(background)
+    if "spatial_ref" in background.coords:
+        # Validate before alignment: relabeling coordinates must not hide stale
+        # transforms or legacy edge coordinates in a georeferenced product.
+        validate_persisted_grid(background.to_dataset(name="background_reflectance"))
 
     if target_scene is not None:
         background = _align_background_to_scene(background, target_scene)
@@ -128,7 +133,10 @@ def _align_background_to_scene(
     target_scene: xr.Dataset,
 ) -> xr.DataArray:
     target = target_scene["reflectance"]
-    if _coords_match(background, target, ("y", "x")):
+    source_crs = background.rio.crs
+    target_crs = target.rio.crs
+    crs_matches = source_crs == target_crs or source_crs is None or target_crs is None
+    if _coords_match(background, target, ("y", "x")) and crs_matches:
         return background
 
     reprojected = _try_reproject_match(background, target)
@@ -136,12 +144,13 @@ def _align_background_to_scene(
         return reprojected
 
     if (
-        background.sizes["y"] == target.sizes["y"]
+        source_crs is None
+        and "spatial_ref" not in background.coords
+        and background.sizes["y"] == target.sizes["y"]
         and background.sizes["x"] == target.sizes["x"]
     ):
-        # Some single-scene rasters arrive without durable CRS metadata in tests
-        # or intermediate workflows. If shape matches but geospatial reprojection
-        # is unavailable, use the prepared scene as the coordinate authority.
+        # Preserve support for explicitly unreferenced, positional backgrounds.
+        # Never use matching shape to conceal a failed geospatial reprojection.
         return background.assign_coords(
             y=target.coords["y"].values,
             x=target.coords["x"].values,
@@ -154,13 +163,17 @@ def _try_reproject_match(
     background: xr.DataArray,
     target: xr.DataArray,
 ) -> xr.DataArray | None:
+    if background.rio.crs is None or target.rio.crs is None:
+        return None
     try:
         target_grid = target.isel(band=0, drop=True)
-        reprojected = background.rio.write_crs(background.rio.crs, inplace=False)
+        # rioxarray requires non-spatial dimensions before y/x; the public
+        # SPIReS background contract deliberately uses (y, x, band).
+        reprojected = background.transpose("band", "y", "x")
         reprojected = reprojected.rio.reproject_match(target_grid)
         return _normalize_background_dims(reprojected)
-    except Exception:
-        return None
+    except Exception as exc:
+        raise ValueError("background reflectance reprojection to the scene failed") from exc
 
 
 def _assign_target_band_coord(

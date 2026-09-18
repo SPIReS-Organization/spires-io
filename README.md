@@ -315,3 +315,14 @@ Clustering currently materializes scene arrays in memory. Pass the returned
 object to `spires_inversion.invert()` for automatic representative inversion
 and spatial scattering. Postprocessing continues to evaluate pixel-level
 illumination after inversion products have been scattered.
+
+## Background grid validation
+
+Georeferenced backgrounds are checked for agreement between pixel-center
+coordinates and the persisted GeoTransform before alignment. Invalid legacy
+edge coordinates or rounded transforms must be repaired explicitly from verified
+source-grid metadata; equal array shapes do not establish spatial alignment.
+Reprojection uses rioxarray's required `(band, y, x)` layout and returns the
+canonical SPIReS `(y, x, band)` layout. A failed geospatial reprojection now raises
+an error instead of silently relabeling a georeferenced array. Positional,
+unreferenced backgrounds retain their existing compatibility path.
