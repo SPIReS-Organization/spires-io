@@ -243,6 +243,53 @@ Batch manifests and run-wide policy belong to `spires-batch`. Batch execution
 calls the public scene, background, ancillary, mask, and persistence APIs
 directly; `spires-io` does not define a second manifest-item schema.
 
+## Raster scene adapters (Landsat, HLS, Sentinel-2)
+
+`spires_io.raster_scene.open_raster_scene` turns a locally stored scene directory
+into an inversion-ready `xarray.Dataset` on one grid:
+
+| Variable       | Dims            | dtype   | Meaning                                                    |
+|----------------|-----------------|---------|------------------------------------------------------------|
+| `reflectance`  | `(y, x, band)`  | float32 | Surface reflectance; NaN where nodata. Passes `validate_target_spectra`. |
+| `valid`        | `(y, x)`        | bool    | True = run the inversion (not fill / cloud / shadow / cirrus / saturated / nodata). |
+| `solar_zenith` | `(y, x)`        | float32 | Degrees, `units="degree"`. Passes `validate_solar_angles`. |
+
+`band` carries common names (`blue, green, red, nir, swir1, swir2, …`) and a
+`wavelength_nm` coordinate. Dataset attrs: `sensor`, `platform` (Landsat), `acquisition_time`,
+`resolution_m`, `source_product_id`; the CRS is carried by the `rio` accessor (`ds.rio.crs`).
+
+Each sensor is a `spires_io.sensor_spec.SensorSpec` (band globs, scale/offset/nodata,
+QA decoder, acquisition time, solar-zenith provider). Registered adapters:
+
+| Registry key | Scene directory layout                                          | Solar zenith                      |
+|--------------|-----------------------------------------------------------------|-----------------------------------|
+| `landsat`    | Collection 2 Level-2 bundle: `*_SR_B2..B7.TIF`, `*_QA_PIXEL.TIF`, `*_QA_RADSAT.TIF`, `*_MTL.txt` | computed per pixel (`spires_io.solar`) |
+| `hls_l30`    | `HLS.L30.*.v2.0.B01..B07.tif`, `.Fmask.tif`, `.SZA.tif`           | shipped `SZA` band                |
+| `hls_s30`    | `HLS.S30.*.v2.0.B01..B12.tif`, `.Fmask.tif`, `.SZA.tif`           | shipped `SZA` band                |
+| `sentinel2`  | Element84 Earth Search COGs: `B02.tif … B12.tif`, `SCL.tif`, plus the STAC item as `item.json` | computed per pixel (`spires_io.solar`) |
+
+```python
+from spires_io.api import open_surface_reflectance
+
+ds = open_surface_reflectance("/scratch/spires/scenes/landsat/LC08_L2SP_042034_20240214_20240223_02_T1", sensor="landsat")
+s2 = open_surface_reflectance(".../sentinel2/S2B_11SLB_20250420_0_L2A", sensor="sentinel2")   # 20 m, 10 m bands block-averaged
+s2_10m = open_surface_reflectance(".../sentinel2/S2B_11SLB_20250420_0_L2A", sensor="sentinel2",
+                                  target_resolution_m=10, resampler=my_super_resolver)       # any Resampler callable
+```
+
+A `Resampler` is `Callable[[dict[str, DataArray], int], dict[str, DataArray]]`: all
+native-resolution bands in, all bands on the target grid out. `block_mean` (default when
+coarsening) and `nearest` ship with `spires_io.sensor_spec`; a super-resolver such as DSen2
+is supplied by the caller and never imported here.
+
+Scene cache convention: `/scratch/spires/scenes/<sensor>/<scene_id>/`. Adapters never
+touch the network; populating the cache is a separate step (see bead `spires-dki.1`).
+Sentinel-2 comes from the Element84 mirror, whose COGs are already BOA-offset-harmonized;
+the adapter refuses items without `earthsearch:boa_offset_applied: true` rather than guessing
+the offset. Original Copernicus SAFE products are not supported by this adapter.
+
+Opt-in real-data tests: `SPIRES_SCENE_CACHE=/scratch/spires/scenes pytest -m real_data`.
+
 ## Solar and terrain illumination geometry
 
 Prepared scenes always include `cosine_solar_zenith` when `solar_zenith` is
