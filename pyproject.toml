@@ -36,6 +36,7 @@ where = ["./"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["./"]
+markers = ["real_data: needs SPIRES_SCENE_CACHE pointing at /scratch/spires/scenes-style directories"]
 
 [tool.setuptools_scm]
 version_scheme = "post-release"
