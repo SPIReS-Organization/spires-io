@@ -96,3 +96,36 @@ def test_custom_resampler_is_used(landsat_scene):
     ds = open_landsat_scene(landsat_scene, resampler=doubling)
     assert calls == [30]
     assert ds["reflectance"].values == pytest.approx(2 * (4000 * 2.75e-5 - 0.2), abs=1e-6)
+
+
+from spires_io.hls import open_hls_l30_scene, open_hls_s30_scene
+from conftest import write_fake_hls_scene
+
+
+def test_hls_l30_contract_and_values(hls_l30_scene):
+    ds = open_hls_l30_scene(hls_l30_scene)
+    validate_target_spectra(ds["reflectance"])
+    validate_solar_angles(ds["solar_zenith"])
+    assert list(ds.band.values) == ["coastal", "blue", "green", "red", "nir", "swir1", "swir2"]
+    assert ds["reflectance"].values == pytest.approx(0.4, abs=1e-6)
+    assert ds["solar_zenith"].values == pytest.approx(45.0, abs=1e-4)
+    assert ds["valid"].values.all()
+    assert ds.attrs["sensor"] == "hls_l30" and ds.attrs["acquisition_time"] == "2024-02-14T18:23:01"
+
+
+def test_hls_s30_bands(hls_s30_scene):
+    ds = open_hls_s30_scene(hls_s30_scene)
+    assert list(ds.band.values) == ["coastal", "blue", "green", "red", "red_edge1", "red_edge2",
+                                    "red_edge3", "nir", "nir_narrow", "swir1", "swir2"]
+    assert ds.attrs["sensor"] == "hls_s30"
+
+
+def test_hls_nodata_and_fmask_both_invalidate(tmp_path):
+    red = np.full((8, 8), 4000, np.int16)
+    red[2, 2] = -9999
+    fmask = np.zeros((8, 8), np.uint8)
+    fmask[3, 3] = 1 << 1                       # cloud
+    ds = open_hls_l30_scene(write_fake_hls_scene(tmp_path, "L30", dn={"red": red}, qa={"fmask": fmask}))
+    assert np.isnan(ds["reflectance"].sel(band="red").values[2, 2])
+    assert not ds["valid"].values[2, 2] and not ds["valid"].values[3, 3]
+    assert ds["valid"].values.sum() == 62
