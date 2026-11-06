@@ -129,3 +129,47 @@ def test_hls_nodata_and_fmask_both_invalidate(tmp_path):
     assert np.isnan(ds["reflectance"].sel(band="red").values[2, 2])
     assert not ds["valid"].values[2, 2] and not ds["valid"].values[3, 3]
     assert ds["valid"].values.sum() == 62
+
+
+from spires_io.sentinel2 import open_sentinel2_scene
+from conftest import write_fake_sentinel2_scene
+
+
+def test_sentinel2_default_20m_grid_and_contract(sentinel2_scene):
+    ds = open_sentinel2_scene(sentinel2_scene)
+    validate_target_spectra(ds["reflectance"])
+    validate_solar_angles(ds["solar_zenith"])
+    assert ds["reflectance"].shape == (8, 8, 10)
+    assert ds.attrs["resolution_m"] == 20
+    assert ds.attrs["platform"] == "sentinel-2b"
+    assert ds.attrs["acquisition_time"] == "2025-04-20T18:54:03"
+    # DN 4000 * 1e-4, NO additional -0.1: E84 COGs are already offset-harmonized.
+    assert ds["reflectance"].values == pytest.approx(0.4, abs=1e-6)
+    assert ds["valid"].values.all()
+
+
+def test_sentinel2_solar_zenith_matches_stac_sun_elevation(sentinel2_scene):
+    # Real item S2B_11SLB_20250420_0_L2A reports view:sun_elevation 61.13 deg at tile centre;
+    # our fake grid sits near the tile's NW corner, so allow a degree.
+    sza = open_sentinel2_scene(sentinel2_scene)["solar_zenith"].values
+    assert sza.mean() == pytest.approx(90.0 - 61.13, abs=1.0)
+
+
+def test_sentinel2_10m_bands_are_block_averaged(tmp_path):
+    blue = np.indices((16, 16)).sum(axis=0) % 2 * 2000 + 3000     # 3000/5000 checkerboard
+    ds = open_sentinel2_scene(write_fake_sentinel2_scene(tmp_path, dn={"blue": blue}))
+    assert ds["reflectance"].sel(band="blue").values == pytest.approx(0.4, abs=1e-6)
+
+
+def test_sentinel2_upsample_to_10m_with_nearest(sentinel2_scene):
+    from spires_io.sensor_spec import nearest
+    ds = open_sentinel2_scene(sentinel2_scene, target_resolution_m=10, resampler=nearest)
+    assert ds["reflectance"].shape == (16, 16, 10)
+    assert ds["valid"].shape == (16, 16)
+
+
+def test_sentinel2_scl_cloud_invalidates(tmp_path):
+    scl = np.full((8, 8), 4, np.uint8)
+    scl[0, :] = 9
+    ds = open_sentinel2_scene(write_fake_sentinel2_scene(tmp_path, qa={"scl": scl}))
+    assert not ds["valid"].values[0].any() and ds["valid"].values[1:].all()
