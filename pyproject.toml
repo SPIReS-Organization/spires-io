@@ -25,6 +25,10 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest"]
+fetch = ["pystac-client>=0.7", "requests"]
+
+[project.scripts]
+spires-fetch = "spires_io.fetch.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/SPIReS-Organization/spires-io"
