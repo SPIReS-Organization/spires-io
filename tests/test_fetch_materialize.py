@@ -53,8 +53,19 @@ def test_materialize_skips_existing_without_network(server, tmp_path):
 def test_materialize_retries_5xx_then_succeeds(server, tmp_path):
     item = item_for(server)
     server.fail_first["/scene/X_SR_B2.TIF"] = 2
-    materialize(item, tmp_path / "landsat" / "X", ["blue"])
+    scene = materialize(item, tmp_path / "landsat" / "X", ["blue"])
+    assert (scene / "X_SR_B2.TIF").read_bytes() == b"band-two"
     assert server.hits["/scene/X_SR_B2.TIF"] == 3
+
+
+def test_download_retries_dropped_connection(server, tmp_path):
+    item = item_for(server)
+    payload = bytes(range(100))
+    server.files["/scene/X_SR_B2.TIF"] = payload          # Content-Length will be 100
+    server.truncate_first["/scene/X_SR_B2.TIF"] = 40      # first GET sends 40 bytes then closes
+    scene = materialize(item, tmp_path / "landsat" / "X", ["blue"])
+    assert (scene / "X_SR_B2.TIF").read_bytes() == payload
+    assert server.hits["/scene/X_SR_B2.TIF"] == 2
 
 
 def test_materialize_gives_up_after_retries_and_leaves_partial(server, tmp_path):
@@ -64,7 +75,7 @@ def test_materialize_gives_up_after_retries_and_leaves_partial(server, tmp_path)
         materialize(item, tmp_path / "landsat" / "X", ["blue"])
     assert (tmp_path / "landsat" / "X.partial").is_dir()
     assert not (tmp_path / "landsat" / "X").exists()
-    assert server.hits["/scene/X_SR_B2.TIF"] == mod.RETRIES
+    assert server.hits["/scene/X_SR_B2.TIF"] == mod.ATTEMPTS
 
 
 def test_materialize_404_fails_without_retry(server, tmp_path):
@@ -79,6 +90,7 @@ def test_materialize_size_mismatch_is_an_error(server, tmp_path):
     item = item_for(server, sizes={"blue": len(b"band-two") + 1})
     with pytest.raises(FetchError, match="catalog says 9"):
         materialize(item, tmp_path / "landsat" / "X", ["blue"])
+    assert server.hits["/scene/X_SR_B2.TIF"] == 1
 
 
 def test_materialize_rejects_missing_asset_key(server, tmp_path):

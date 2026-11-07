@@ -19,7 +19,7 @@ from spires_io.fetch.sources import asset_filename
 log = logging.getLogger(__name__)
 
 EARTHDATA_HOST = "urs.earthdata.nasa.gov"
-RETRIES = 3
+ATTEMPTS = 4          # first try + 3 retries
 BACKOFF_S = 2.0
 CHUNK = 1 << 20
 
@@ -42,16 +42,16 @@ def check_earthdata_auth() -> None:
 
 
 def _retryable(exc: Exception) -> bool:
-    if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+    if isinstance(exc, (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError)):
         return True
     if isinstance(exc, requests.HTTPError):
         return exc.response is not None and exc.response.status_code >= 500
-    return isinstance(exc, FetchError)      # short read: retry the whole asset
+    return False
 
 
 def download(session: requests.Session, url: str, path: Path, expected_size: int | None = None) -> None:
-    """Stream ``url`` to ``path``. Retries connection errors, timeouts, 5xx and short reads up to RETRIES times."""
-    for attempt in range(1, RETRIES + 1):
+    """Stream ``url`` to ``path``. Retries connection drops (incl. mid-body), timeouts and 5xx, up to ATTEMPTS attempts in total."""
+    for attempt in range(1, ATTEMPTS + 1):
         try:
             with session.get(url, stream=True, timeout=(30, 120)) as response:
                 response.raise_for_status()
@@ -63,9 +63,9 @@ def download(session: requests.Session, url: str, path: Path, expected_size: int
                 raise FetchError(f"{path.name}: got {size} bytes, catalog says {expected_size}")
             return
         except (requests.RequestException, FetchError) as exc:
-            if attempt == RETRIES or not _retryable(exc):
+            if attempt == ATTEMPTS or not _retryable(exc):
                 raise FetchError(f"{url}: {exc}") from exc
-            log.warning("%s: attempt %d/%d failed (%s); retrying", path.name, attempt, RETRIES, exc)
+            log.warning("%s: attempt %d/%d failed (%s); retrying", path.name, attempt, ATTEMPTS, exc)
             time.sleep(BACKOFF_S * attempt)
 
 
