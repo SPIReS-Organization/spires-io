@@ -151,3 +151,37 @@ def test_empty_cache_env_is_treated_as_unset(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         cli.main(["--aoi", "mammoth", "--dry-run"])
     assert exc.value.code == 2
+
+
+def test_catalog_failure_is_reported_in_summary(monkeypatch, tmp_path, capsys):
+    import requests
+
+    def fake_query(source, *a):
+        if source.sensor == "landsat":
+            raise requests.ConnectionError("down")
+        return [hls_item("L30")]
+
+    monkeypatch.setattr(cli.search, "query", fake_query)
+    monkeypatch.setattr(cli, "check_earthdata_auth", lambda: None)
+    done = []
+
+    def fake_materialize(item, scene_dir, *a, **k):
+        done.append(scene_dir)
+        return scene_dir
+
+    monkeypatch.setattr(cli, "materialize", fake_materialize)
+    code = cli.main(["--dest", str(tmp_path), "--sensor", "landsat,hls_l30", "--aoi", "mammoth"])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert done == [tmp_path / "hls_l30" / "HLS.L30.T11SLB.2024045T182301.v2.0"]
+    assert "landsat: query failed" in out
+
+
+def test_existing_scenes_need_no_signer(monkeypatch, tmp_path, capsys):
+    (tmp_path / "landsat" / "LC08_A").mkdir(parents=True)
+    monkeypatch.setattr(cli.search, "query", lambda source, *a: [landsat_item(item_id="LC08_A")])
+    monkeypatch.setitem(cli.SOURCES, "landsat", dataclasses.replace(
+        cli.SOURCES["landsat"], make_signer=lambda: pytest.fail("signer must not be called")))
+    code = cli.main(["--dest", str(tmp_path), "--aoi", "mammoth", "--sensor", "landsat"])
+    assert code == 0
+    assert "1 scene(s) materialized, 0 failed" in capsys.readouterr().out

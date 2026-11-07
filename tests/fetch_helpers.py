@@ -90,12 +90,14 @@ def s2_item(item_id="S2B_11SLB_20250420_0_L2A", when="2025-04-20T18:54:03.375000
 # ---- local HTTP server -----------------------------------------------------------
 class FakeAssetServer:
     """Serves ``files`` (URL path -> bytes). ``fail_first[path] = n`` answers 503 to the first n GETs of that path.
-    ``truncate_first[path] = n`` sends only the first n body bytes of the first GET (Content-Length stays full), then closes."""
+    ``truncate_first[path] = n`` sends only the first n body bytes of the first GET (Content-Length stays full), then closes.
+    ``html_paths`` answer 200 with ``Content-Type: text/html`` (an authentication landing page)."""
 
     def __init__(self):
         self.files: dict[str, bytes] = {}
         self.fail_first: dict[str, int] = {}
         self.truncate_first: dict[str, int] = {}
+        self.html_paths: set[str] = set()
         self.hits: dict[str, int] = defaultdict(int)
         server = self
 
@@ -110,6 +112,8 @@ class FakeAssetServer:
                     self.send_error(404)
                     return
                 self.send_response(200)
+                if self.path in server.html_paths:
+                    self.send_header("Content-Type", "text/html")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 cut = server.truncate_first.get(self.path)

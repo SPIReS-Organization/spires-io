@@ -4,7 +4,8 @@
 The dedupe is two passes, ported from spipyservice ``target_chain.py``
 (``filter_latest_items`` / ``coverage_deduped_by_date``): first drop superseded
 reprocessings of the same satellite pass, then per calendar date keep the item
-covering most of the AOI. Pass 1 must not key on the date alone: S2A and S2B can
+covering most of the AOI. Pass 2 keeps one item per date across tiles and
+same-day overpasses alike. Pass 1 must not key on the date alone: S2A and S2B can
 image one tile ten minutes apart, and a date key would silently drop one.
 """
 from __future__ import annotations
@@ -47,8 +48,13 @@ def bbox_overlap(a, b) -> float:
 def one_per_date(source: Source, items: list[pystac.Item], bbox: Bbox) -> list[pystac.Item]:
     """Pass 2: per acquisition date keep the item covering most of the AOI.
 
-    Lowest catalog nodata fraction wins; items without one rank below any that
-    have it and are ordered by bbox overlap with the AOI among themselves.
+    This keeps ONE item per calendar date, whether the date has several tiles
+    or several same-day overpasses. A same-day S2A/S2B pair on one tile is
+    intentionally reduced to the better-covering scene: spipyservice measured
+    the partial swath on T11SLB to be a strict subset of the full one, so the
+    second scene adds nothing. Lowest catalog nodata fraction wins; items
+    without one rank below any that have it and are ordered by bbox overlap
+    with the AOI among themselves.
     """
     by_date: dict[dt.date, list[pystac.Item]] = defaultdict(list)
     for item in items:

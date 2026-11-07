@@ -93,6 +93,15 @@ def test_materialize_size_mismatch_is_an_error(server, tmp_path):
     assert server.hits["/scene/X_SR_B2.TIF"] == 1
 
 
+def test_download_rejects_html_response(server, tmp_path):
+    item = item_for(server)
+    server.html_paths.add("/scene/X_SR_B2.TIF")
+    with pytest.raises(FetchError, match="HTML page"):
+        materialize(item, tmp_path / "landsat" / "X", ["blue"])
+    assert server.hits["/scene/X_SR_B2.TIF"] == 1
+    assert (tmp_path / "landsat" / "X.partial").is_dir()
+
+
 def test_materialize_rejects_missing_asset_key(server, tmp_path):
     item = item_for(server)
     with pytest.raises(FetchError, match="qa_pixel"):

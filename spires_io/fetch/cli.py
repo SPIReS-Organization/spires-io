@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pystac
+import pystac_client.exceptions
 import requests
 
 from spires_io.fetch import search
@@ -55,23 +56,28 @@ def requested_sensors(args: argparse.Namespace) -> list[str]:
     return sensors
 
 
-def plan(args: argparse.Namespace) -> list[tuple[Source, list[pystac.Item]]]:
-    """Resolve what to fetch: (source, items) per sensor, by search + dedupe or by explicit id."""
+def plan(args: argparse.Namespace) -> tuple[list[tuple[Source, list[pystac.Item]]], list[str]]:
+    """Resolve what to fetch: ((source, items) per sensor, sensors whose catalog query failed)."""
     if args.scene_id:
         by_sensor: dict[str, list[str]] = {}
         for scene_id in args.scene_id:
             by_sensor.setdefault(sensor_from_scene_id(scene_id), []).append(scene_id)
-        return [(SOURCES[name], search.fetch_by_ids(SOURCES[name], ids)) for name, ids in by_sensor.items()]
+        return [(SOURCES[name], search.fetch_by_ids(SOURCES[name], ids)) for name, ids in by_sensor.items()], []
 
     bbox = AOIS[args.aoi] if args.aoi else tuple(args.bbox)
     end = args.end or dt.date.today()
     start = args.start or end - dt.timedelta(days=45)
-    jobs = []
+    jobs, failed_sensors = [], []
     for name in requested_sensors(args):
         source = SOURCES[name]
-        items = search.query(source, bbox, start, end)
+        try:
+            items = search.query(source, bbox, start, end)
+        except (requests.RequestException, pystac_client.exceptions.APIError) as exc:
+            log.error("%s: catalog query failed: %s", source.sensor, exc)
+            failed_sensors.append(source.sensor)
+            continue
         jobs.append((source, search.select(source, items, bbox, args.max_cloud, args.max_scenes)))
-    return jobs
+    return jobs, failed_sensors
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -89,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(str(exc)) from exc
 
     try:
-        jobs = plan(args)
+        jobs, failed_sensors = plan(args)
     except LookupError as exc:
         raise SystemExit(str(exc)) from exc
     if args.dry_run:
@@ -97,23 +103,27 @@ def main(argv: list[str] | None = None) -> int:
             for item in items:
                 print(f"{source.sensor}\t{item.id}\t{item_datetime(item):%Y-%m-%dT%H:%M}"
                       f"\tcloud={item.properties.get('eo:cloud_cover', '?')}\ttile={source.tile(item)}")
-        return 0
+        return 1 if failed_sensors else 0
 
-    done, failed = [], []
+    done = []
+    failed = [f"{sensor}: query failed" for sensor in failed_sensors]
     for source, items in jobs:
         if not items:
             log.warning("%s: nothing selected", source.sensor)
             continue
-        try:
-            sign = source.make_signer()
-        except requests.RequestException as exc:
-            log.error("%s: could not obtain signer: %s", source.sensor, exc)
-            failed.extend(item.id for item in items)
-            continue
-        for item in items:
+        sign = None     # fetched lazily: scenes already on disk need no Planetary Computer SAS token
+        for index, item in enumerate(items):
             scene_dir = args.dest / source.sensor / item.id
+            if sign is None and not scene_dir.is_dir():
+                try:
+                    sign = source.make_signer()
+                except requests.RequestException as exc:
+                    log.error("%s: could not obtain signer: %s", source.sensor, exc)
+                    failed.extend(rest.id for rest in items[index:]
+                                  if not (args.dest / source.sensor / rest.id).is_dir())
+                    break
             try:
-                done.append(materialize(item, scene_dir, source.assets, sign))
+                done.append(materialize(item, scene_dir, source.assets, sign or (lambda href: href)))
             except (FetchError, OSError, requests.RequestException) as exc:
                 log.error("%s: %s", item.id, exc)
                 failed.append(item.id)

@@ -55,6 +55,8 @@ def download(session: requests.Session, url: str, path: Path, expected_size: int
         try:
             with session.get(url, stream=True, timeout=(30, 120)) as response:
                 response.raise_for_status()
+                if response.headers.get("Content-Type", "").split(";")[0].strip().lower() == "text/html":
+                    raise FetchError(f"{url}: server returned an HTML page, not data (authentication redirect?)")
                 with open(path, "wb") as fh:
                     for chunk in response.iter_content(CHUNK):
                         fh.write(chunk)
