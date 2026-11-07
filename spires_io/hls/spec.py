@@ -10,6 +10,7 @@ from spires_io.sensor_spec import SensorSpec, nearest, resolution_m
 # Fmask bits (HLS v2.0 User Guide, table 9).
 _FMASK_INVALID_BITS = (0, 1, 2, 3)   # cirrus, cloud, adjacent to cloud/shadow, cloud shadow
 _FMASK_FILL = 255
+_SZA_FILL = 40000   # HLS v2.0 SZA fill; the band carries no nodata tag
 
 
 def decode_qa(layers: dict[str, np.ndarray]) -> np.ndarray:
@@ -41,7 +42,8 @@ def shipped_sza(scene_dir: Path, template: xr.DataArray) -> xr.DataArray:
 
     sza = read_band(resolve_one(scene_dir, "sza", "*.SZA.tif"))
     sza = nearest({"sza": sza}, resolution_m(template))["sza"]
-    return sza.astype(np.float32) * np.float32(0.01)
+    out = sza.astype(np.float32)
+    return out.where(sza != _SZA_FILL) * np.float32(0.01)
 
 
 _L30_BANDS = {"coastal": "B01", "blue": "B02", "green": "B03", "red": "B04", "nir": "B05", "swir1": "B06", "swir2": "B07"}
