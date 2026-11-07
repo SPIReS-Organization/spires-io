@@ -72,6 +72,12 @@ def select(source: Source, items: list[pystac.Item], bbox: Bbox,
            max_cloud: float = 100.0, max_scenes: int | None = None) -> list[pystac.Item]:
     """Pre-filter, dedupe, cloud-filter, sort ascending by time, cap."""
     items = one_per_date(source, latest_per_acquisition(source, prefilter(source, items)), bbox)
-    items = [item for item in items if float(item.properties.get("eo:cloud_cover", 0.0)) <= max_cloud]
+    if max_cloud < 100:
+        kept = [item for item in items
+                if item.properties.get("eo:cloud_cover") is not None
+                and float(item.properties["eo:cloud_cover"]) <= max_cloud]
+        log.info("%s: cloud filter dropped %d of %d items (max %.0f%%)",
+                 source.sensor, len(items) - len(kept), len(items), max_cloud)
+        items = kept
     items.sort(key=item_datetime)
     return items if max_scenes is None else items[:max_scenes]
