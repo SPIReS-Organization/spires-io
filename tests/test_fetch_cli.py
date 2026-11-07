@@ -1,4 +1,5 @@
 import dataclasses
+import datetime as dt
 
 import pytest
 
@@ -95,3 +96,58 @@ def test_earthdata_check_runs_for_hls(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "check_earthdata_auth", lambda: (_ for _ in ()).throw(FetchError("no netrc")))
     with pytest.raises(SystemExit, match="no netrc"):
         cli.main(["--dest", str(tmp_path), "--aoi", "mammoth", "--sensor", "hls_l30"])
+
+
+def test_non_fetch_errors_are_reported_not_raised(monkeypatch, tmp_path, capsys):
+    items = {"landsat": [landsat_item(item_id="LC08_A"), landsat_item(item_id="LC09_B", platform="landsat-9",
+                                                                        when="2024-02-22T18:23:01Z")]}
+    monkeypatch.setattr(cli.search, "query", lambda source, *a: items[source.sensor])
+    monkeypatch.setattr(cli, "check_earthdata_auth", lambda: pytest.fail("landsat needs no Earthdata auth"))
+    monkeypatch.setitem(cli.SOURCES, "landsat", dataclasses.replace(
+        cli.SOURCES["landsat"], make_signer=lambda: (lambda href: href)))
+    done = []
+
+    def fake_materialize(item, scene_dir, asset_keys, sign, session=None):
+        if item.id == "LC08_A":
+            raise OSError("disk full")
+        done.append(scene_dir)
+        return scene_dir
+
+    monkeypatch.setattr(cli, "materialize", fake_materialize)
+    code = cli.main(["--dest", str(tmp_path), "--aoi", "mammoth", "--sensor", "landsat"])
+    assert code == 1
+    assert done == [tmp_path / "landsat" / "LC09_B"]
+    assert "1 scene(s) materialized, 1 failed: ['LC08_A']" in capsys.readouterr().out
+
+
+def test_search_flags_reach_select(monkeypatch, tmp_path, capsys):
+    calls = []
+
+    def fake_query(source, bbox, start, end):
+        calls.append((bbox, start, end))
+        if source.sensor != "landsat":
+            return []
+        return [landsat_item(item_id="LC08_EARLY", when="2024-02-05T18:23:01Z", cloud=90.0),
+                landsat_item(item_id="LC08_MID", when="2024-02-14T18:23:01Z", cloud=5.0),
+                landsat_item(item_id="LC08_LATE", when="2024-02-22T18:23:01Z", cloud=20.0)]
+
+    monkeypatch.setattr(cli.search, "query", fake_query)
+    code = cli.main(["--dest", str(tmp_path), "--bbox", "-119.1", "37.6", "-119.0", "37.7",
+                     "--start", "2024-02-01", "--end", "2024-03-01", "--max-cloud", "50", "--max-scenes", "1",
+                     "--dry-run"])
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert code == 0
+    assert set(calls) == {((-119.1, 37.6, -119.0, 37.7), dt.date(2024, 2, 1), dt.date(2024, 3, 1))}
+    assert len(lines) == 1 and "LC08_MID" in lines[0]
+
+
+def test_unknown_scene_id_prefix_exits_cleanly(tmp_path):
+    with pytest.raises(SystemExit, match="cannot infer sensor"):
+        cli.main(["--dest", str(tmp_path), "--dry-run", "--scene-id", "LE07_X"])
+
+
+def test_empty_cache_env_is_treated_as_unset(monkeypatch):
+    monkeypatch.setenv("SPIRES_SCENE_CACHE", "")
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--aoi", "mammoth", "--dry-run"])
+    assert exc.value.code == 2

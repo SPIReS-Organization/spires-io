@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pystac
+import requests
 
 from spires_io.fetch import search
 from spires_io.fetch.materialize import FetchError, check_earthdata_auth, materialize
@@ -24,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Search STAC catalogs over an AOI, dedupe reprocessings, and download whole scenes into "
                     "<dest>/<sensor>/<scene_id>/ for spires_io's raster-scene adapters.",
     )
-    parser.add_argument("--dest", type=Path, default=os.environ.get("SPIRES_SCENE_CACHE"),
+    parser.add_argument("--dest", type=Path, default=os.environ.get("SPIRES_SCENE_CACHE") or None,
                         help="scene root — local materialization of STAC items for the file-based adapters "
                              "(default: $SPIRES_SCENE_CACHE)")
     parser.add_argument("--sensor", default=",".join(SOURCES),
@@ -43,7 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def requested_sensors(args: argparse.Namespace) -> list[str]:
     if args.scene_id:
-        return sorted({sensor_from_scene_id(scene_id) for scene_id in args.scene_id})
+        try:
+            return sorted({sensor_from_scene_id(scene_id) for scene_id in args.scene_id})
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
     sensors = [name.strip() for name in args.sensor.split(",") if name.strip()]
     unknown = [name for name in sensors if name not in SOURCES]
     if unknown:
@@ -84,7 +88,10 @@ def main(argv: list[str] | None = None) -> int:
         except FetchError as exc:
             raise SystemExit(str(exc)) from exc
 
-    jobs = plan(args)
+    try:
+        jobs = plan(args)
+    except LookupError as exc:
+        raise SystemExit(str(exc)) from exc
     if args.dry_run:
         for source, items in jobs:
             for item in items:
@@ -97,12 +104,17 @@ def main(argv: list[str] | None = None) -> int:
         if not items:
             log.warning("%s: nothing selected", source.sensor)
             continue
-        sign = source.make_signer()
+        try:
+            sign = source.make_signer()
+        except requests.RequestException as exc:
+            log.error("%s: could not obtain signer: %s", source.sensor, exc)
+            failed.extend(item.id for item in items)
+            continue
         for item in items:
             scene_dir = args.dest / source.sensor / item.id
             try:
                 done.append(materialize(item, scene_dir, source.assets, sign))
-            except FetchError as exc:
+            except (FetchError, OSError, requests.RequestException) as exc:
                 log.error("%s: %s", item.id, exc)
                 failed.append(item.id)
     print(f"{len(done)} scene(s) materialized, {len(failed)} failed" + (f": {failed}" if failed else ""))
