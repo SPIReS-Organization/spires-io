@@ -81,3 +81,28 @@ def select(source: Source, items: list[pystac.Item], bbox: Bbox,
         items = kept
     items.sort(key=item_datetime)
     return items if max_scenes is None else items[:max_scenes]
+
+
+def open_catalog(endpoint: str) -> Client:
+    client = Client.open(endpoint)
+    client.add_conforms_to("ITEM_SEARCH")      # CMR-STAC under-advertises conformance; it does support /search
+    return client
+
+
+def query(source: Source, bbox: Bbox, start: dt.date, end: dt.date) -> list[pystac.Item]:
+    """All items of the source's collection intersecting ``bbox`` within [start, end] (inclusive dates)."""
+    client = open_catalog(source.endpoint)
+    result = client.search(collections=[source.collection], bbox=list(bbox),
+                           datetime=f"{start.isoformat()}/{end.isoformat()}", limit=100)
+    items = list(result.items())
+    log.info("%s: %d items in %s for %s..%s", source.sensor, len(items), source.collection, start, end)
+    return items
+
+
+def fetch_by_ids(source: Source, ids: list[str]) -> list[pystac.Item]:
+    client = open_catalog(source.endpoint)
+    items = list(client.search(collections=[source.collection], ids=list(ids)).items())
+    missing = set(ids) - {item.id for item in items}
+    if missing:
+        raise LookupError(f"{source.sensor}: not found in {source.collection}: {sorted(missing)}")
+    return items
