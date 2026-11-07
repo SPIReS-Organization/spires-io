@@ -2,8 +2,10 @@
 """Per-sensor STAC source configuration for ``spires-fetch``.
 
 Nothing here imports the adapters: which assets to download is a catalog-side
-fact. ``tests/test_fetch_sources.py`` cross-checks the resulting filenames
-against the adapter globs so the two cannot drift apart silently.
+fact. ``tests/test_fetch_sources.py`` cross-checks the asset lists against the
+adapter globs (over hand-written hrefs mirroring each catalog), so a change on
+the adapter side fails offline; a change in the catalogs' own naming is only
+caught by the ``real_data`` acceptance run.
 """
 from __future__ import annotations
 
