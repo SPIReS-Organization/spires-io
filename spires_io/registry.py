@@ -6,7 +6,10 @@ from typing import Any, Callable
 
 import xarray as xr
 
+import spires_io.hls as hls
+import spires_io.landsat as landsat
 import spires_io.modis as modis
+import spires_io.sentinel2 as sentinel2
 import spires_io.viirs as viirs
 
 OpenFn = Callable[..., xr.Dataset]
@@ -35,6 +38,17 @@ SENSOR_ALIASES = {
     "j01": "viirs",
     "noaa21": "viirs",
     "j02": "viirs",
+    "landsat": "landsat",
+    "landsat8": "landsat",
+    "landsat9": "landsat",
+    "lc08": "landsat",
+    "lc09": "landsat",
+    "oli": "landsat",
+    "hlsl30": "hls_l30",
+    "hlss30": "hls_s30",
+    "sentinel2": "sentinel2",
+    "s2": "sentinel2",
+    "msi": "sentinel2",
 }
 
 PLATFORM_ALIASES = {
@@ -55,13 +69,19 @@ PLATFORM_ALIASES = {
         "j02": "noaa21",
         "vj209ga": "noaa21",
     },
+    "landsat": {"landsat8": "landsat8", "lc08": "landsat8", "landsat9": "landsat9", "lc09": "landsat9"},
+    "hls_l30": {"landsat8": "landsat8", "lc08": "landsat8", "landsat9": "landsat9", "lc09": "landsat9"},
+    "hls_s30": {"sentinel2a": "sentinel2a", "s2a": "sentinel2a", "sentinel2b": "sentinel2b", "s2b": "sentinel2b",
+                "sentinel2c": "sentinel2c", "s2c": "sentinel2c"},
+    "sentinel2": {"sentinel2a": "sentinel2a", "s2a": "sentinel2a", "sentinel2b": "sentinel2b", "s2b": "sentinel2b",
+                  "sentinel2c": "sentinel2c", "s2c": "sentinel2c"},
 }
 
 
 def _normalize_token(value: str | Path | None) -> str | None:
     if value is None:
         return None
-    text = str(value).strip().lower().replace("_", "").replace("-", "").replace(" ", "")
+    text = str(value).strip().lower().replace("_", "").replace("-", "").replace(".", "").replace(" ", "")
     return text or None
 
 
@@ -107,9 +127,45 @@ VIIRS_ADAPTER = SensorIOAdapter(
     notes="VIIRS SNPP/NOAA-20/NOAA-21 surface-reflectance I/O.",
 )
 
+LANDSAT_ADAPTER = SensorIOAdapter(
+    sensor="landsat",
+    supported_platforms=landsat.SPEC.platforms,
+    open_surface_reflectance=landsat.open_landsat_scene,
+    prepare_scene_for_inversion=landsat.open_landsat_scene,
+    notes="Landsat 8/9 Collection 2 Level-2 SR scene directories (local).",
+)
+
+HLS_L30_ADAPTER = SensorIOAdapter(
+    sensor="hls_l30",
+    supported_platforms=hls.L30_SPEC.platforms,
+    open_surface_reflectance=hls.open_hls_l30_scene,
+    prepare_scene_for_inversion=hls.open_hls_l30_scene,
+    notes="HLS v2.0 L30 (Landsat-derived, 30 m) granule directories (local).",
+)
+
+HLS_S30_ADAPTER = SensorIOAdapter(
+    sensor="hls_s30",
+    supported_platforms=hls.S30_SPEC.platforms,
+    open_surface_reflectance=hls.open_hls_s30_scene,
+    prepare_scene_for_inversion=hls.open_hls_s30_scene,
+    notes="HLS v2.0 S30 (Sentinel-2-derived, 30 m) granule directories (local).",
+)
+
+SENTINEL2_ADAPTER = SensorIOAdapter(
+    sensor="sentinel2",
+    supported_platforms=sentinel2.SPEC.platforms,
+    open_surface_reflectance=sentinel2.open_sentinel2_scene,
+    prepare_scene_for_inversion=sentinel2.open_sentinel2_scene,
+    notes="Sentinel-2 L2A in the Element84 Earth Search COG layout (local); default 20 m grid.",
+)
+
 SENSOR_REGISTRY: dict[str, SensorIOAdapter] = {
     "modis": MODIS_ADAPTER,
     "viirs": VIIRS_ADAPTER,
+    "landsat": LANDSAT_ADAPTER,
+    "hls_l30": HLS_L30_ADAPTER,
+    "hls_s30": HLS_S30_ADAPTER,
+    "sentinel2": SENTINEL2_ADAPTER,
 }
 
 
