@@ -122,8 +122,12 @@ def open_raster_scene(
         },
     )
     solar_zenith = spec.sza_provider(scene_dir, template).astype(np.float32)
-    if solar_zenith.shape != template.shape:
-        solar_zenith = solar_zenith.reindex_like(template, method="nearest", tolerance=target_m / 2)
+    if not (solar_zenith.y.equals(template.y) and solar_zenith.x.equals(template.x)):
+        try:
+            solar_zenith = solar_zenith.sel(y=template.y, x=template.x, method="nearest", tolerance=target_m / 2)
+        except KeyError as exc:
+            raise ValueError(f"SZA grid does not align with the scene grid (tolerance {target_m / 2} m)") from exc
+        solar_zenith = solar_zenith.assign_coords(y=template.y, x=template.x)
     solar_zenith.attrs = {"units": "degree"}
     solar_zenith.encoding = {}
 
