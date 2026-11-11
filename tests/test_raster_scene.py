@@ -173,3 +173,26 @@ def test_sentinel2_scl_cloud_invalidates(tmp_path):
     scl[0, :] = 9
     ds = open_sentinel2_scene(write_fake_sentinel2_scene(tmp_path, qa={"scl": scl}))
     assert not ds["valid"].values[0].any() and ds["valid"].values[1:].all()
+
+
+def test_bbox_clips_reflectance_valid_and_sza(hls_l30_scene):
+    full = open_hls_l30_scene(hls_l30_scene)
+    bbox = (300120.0, 4169760.0, 300240.0, 4169880.0)   # lower-right 4x4 of the 8x8 fake
+    ds = open_hls_l30_scene(hls_l30_scene, bbox=bbox)
+    assert ds["reflectance"].shape == (4, 4, 7)
+    assert ds["valid"].shape == (4, 4)
+    assert ds["solar_zenith"].shape == (4, 4)
+    np.testing.assert_allclose(ds.x.values, full.x.values[4:])
+    np.testing.assert_allclose(ds.y.values, full.y.values[4:])
+    np.testing.assert_array_equal(ds["reflectance"].values, full["reflectance"].values[4:, 4:, :])
+    validate_target_spectra(ds["reflectance"])
+    validate_solar_angles(ds["solar_zenith"])
+
+
+def test_bbox_outside_scene_raises(hls_l30_scene):
+    with pytest.raises(ValueError, match="bbox"):
+        open_hls_l30_scene(hls_l30_scene, bbox=(0.0, 0.0, 100.0, 100.0))
+
+
+def test_bbox_none_is_full_scene(hls_l30_scene):
+    assert open_hls_l30_scene(hls_l30_scene, bbox=None)["reflectance"].shape == (8, 8, 7)

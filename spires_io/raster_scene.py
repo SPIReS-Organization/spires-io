@@ -33,6 +33,19 @@ def read_band(path: Path) -> xr.DataArray:
     return da.squeeze("band", drop=True).load()
 
 
+def clip_box(da: xr.DataArray, bbox: tuple[float, float, float, float]) -> xr.DataArray:
+    """Clip a (y, x) raster to ``bbox = (minx, miny, maxx, maxy)`` in the raster's CRS."""
+    from rioxarray.exceptions import NoDataInBounds, OneDimensionalRaster
+
+    minx, miny, maxx, maxy = bbox
+    if not (minx < maxx and miny < maxy):
+        raise ValueError(f"bbox must be (minx, miny, maxx, maxy) with min < max, got {bbox}")
+    try:
+        return da.rio.clip_box(minx=minx, miny=miny, maxx=maxx, maxy=maxy)
+    except (NoDataInBounds, OneDimensionalRaster) as exc:
+        raise ValueError(f"bbox {bbox} does not intersect the scene ({exc})") from exc
+
+
 def to_reflectance(da: xr.DataArray, scale: float, offset: float, nodata) -> xr.DataArray:
     values = da.values.astype(np.float32) * np.float32(scale) + np.float32(offset)
     values[da.values == nodata] = np.nan
@@ -56,12 +69,16 @@ def open_raster_scene(
     bands: list[str] | None = None,
     target_resolution_m: int | None = None,
     resampler: Resampler | None = None,
+    bbox: tuple[float, float, float, float] | None = None,
 ) -> xr.Dataset:
     """Read, scale, resample, QA-decode and validate one scene.
 
     Returns a Dataset with ``reflectance (y, x, band)`` float32 (NaN = nodata),
     ``valid (y, x)`` bool (True = run the inversion) and ``solar_zenith (y, x)``
-    float32 degrees, all on one grid at ``target_resolution_m``.
+    float32 degrees, all on one grid at ``target_resolution_m``. ``bbox`` is
+    ``(minx, miny, maxx, maxy)`` in the scene CRS; bands and QA layers are
+    clipped before resampling, so the output grid stays pixel-aligned with
+    the full scene.
     """
     scene_dir = Path(scene_dir)
     names = list(bands) if bands is not None else list(spec.band_files)
@@ -76,6 +93,8 @@ def open_raster_scene(
     acquisition_time = spec.acquisition_time(scene_dir)
 
     raw = {n: read_band(p) for n, p in band_paths.items()}
+    if bbox is not None:
+        raw = {n: clip_box(da, bbox) for n, da in raw.items()}
     scaled = {n: to_reflectance(da, spec.scale, spec.offset, spec.nodata) for n, da in raw.items()}
 
     if resampler is None:
@@ -86,6 +105,8 @@ def open_raster_scene(
     template = on_grid[names[0]]
 
     qa_raw = {n: read_band(p) for n, p in qa_paths.items()}
+    if bbox is not None:
+        qa_raw = {n: clip_box(da, bbox) for n, da in qa_raw.items()}
     qa_on_grid = nearest(qa_raw, target_m)
     check_same_grid({**qa_on_grid, "_reflectance": template})
     valid = spec.decode_qa({n: da.values for n, da in qa_on_grid.items()})
@@ -101,6 +122,8 @@ def open_raster_scene(
         },
     )
     solar_zenith = spec.sza_provider(scene_dir, template).astype(np.float32)
+    if solar_zenith.shape != template.shape:
+        solar_zenith = solar_zenith.reindex_like(template, method="nearest", tolerance=target_m / 2)
     solar_zenith.attrs = {"units": "degree"}
     solar_zenith.encoding = {}
 
