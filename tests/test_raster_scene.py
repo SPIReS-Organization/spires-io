@@ -1,4 +1,6 @@
 # tests/test_raster_scene.py
+from dataclasses import replace
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -98,7 +100,7 @@ def test_custom_resampler_is_used(landsat_scene):
     assert ds["reflectance"].values == pytest.approx(2 * (4000 * 2.75e-5 - 0.2), abs=1e-6)
 
 
-from spires_io.hls import open_hls_l30_scene, open_hls_s30_scene
+from spires_io.hls import L30_SPEC, open_hls_l30_scene, open_hls_s30_scene
 from conftest import write_fake_hls_scene
 
 
@@ -196,3 +198,14 @@ def test_bbox_outside_scene_raises(hls_l30_scene):
 
 def test_bbox_none_is_full_scene(hls_l30_scene):
     assert open_hls_l30_scene(hls_l30_scene, bbox=None)["reflectance"].shape == (8, 8, 7)
+
+
+def test_sza_grid_offset_beyond_half_pixel_raises(hls_l30_scene):
+    def shifted_sza(scene_dir, template):
+        return xr.DataArray(
+            np.full(template.shape, 45.0, np.float32), dims=("y", "x"),
+            coords={"y": template.y.values + 20.0, "x": template.x.values + 20.0},
+        )
+
+    with pytest.raises(ValueError, match="does not align"):
+        open_raster_scene(hls_l30_scene, replace(L30_SPEC, sza_provider=shifted_sza))
