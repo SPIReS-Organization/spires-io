@@ -46,3 +46,26 @@ def test_read_acquisition_time_from_mtl(landsat_scene):
 def test_read_acquisition_time_missing_mtl_raises(tmp_path):
     with pytest.raises(FileNotFoundError, match="MTL"):
         read_acquisition_time(tmp_path)
+
+
+CORE = frozenset({"fill", "saturated", "cloud", "cirrus"})
+
+
+@pytest.mark.parametrize("qa_pixel, radsat, expected", [
+    (CLEAR | DILATED, 0, True),         # cloud_buffer not excluded
+    (CLEAR | SHADOW, 0, True),          # cloud_shadow not excluded
+    (CLEAR | CLOUD, 0, False),
+    (CLEAR | CIRRUS, 0, False),
+    (FILL, 0, False),
+    (CLEAR, 1 << 1, False),
+])
+def test_decode_qa_core_policy_keeps_buffer_and_shadow(qa_pixel, radsat, expected):
+    layers = {"qa_pixel": np.array([[qa_pixel]], np.uint16), "qa_radsat": np.array([[radsat]], np.uint16)}
+    assert decode_qa(layers, exclude=CORE).tolist() == [[expected]]
+
+
+def test_decode_qa_default_exclude_matches_conservative_policy():
+    from spires_io.sensor_spec import DEFAULT_QA_EXCLUDE
+    layers = {"qa_pixel": np.array([[CLEAR | DILATED, CLEAR | SHADOW, CLEAR]], np.uint16),
+              "qa_radsat": np.zeros((1, 3), np.uint16)}
+    assert decode_qa(layers).tolist() == decode_qa(layers, exclude=DEFAULT_QA_EXCLUDE).tolist() == [[False, False, True]]

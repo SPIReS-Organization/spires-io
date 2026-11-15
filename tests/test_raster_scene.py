@@ -209,3 +209,24 @@ def test_sza_grid_offset_beyond_half_pixel_raises(hls_l30_scene):
 
     with pytest.raises(ValueError, match="does not align"):
         open_raster_scene(hls_l30_scene, replace(L30_SPEC, sza_provider=shifted_sza))
+
+
+def test_landsat_qa_exclude_policy_keeps_dilated_cloud(tmp_path):
+    from conftest import LANDSAT_CLEAR_QA_PIXEL, write_fake_landsat_scene
+    from spires_io.landsat import open_landsat_scene
+    qa_pixel = np.full((8, 8), LANDSAT_CLEAR_QA_PIXEL, np.uint16)
+    qa_pixel[1, 1] |= 1 << 1                   # dilated cloud
+    qa_pixel[2, 2] |= 1 << 3                   # cloud
+    scene = write_fake_landsat_scene(tmp_path, qa={"qa_pixel": qa_pixel})
+    default = open_landsat_scene(scene)
+    core = open_landsat_scene(scene, qa_exclude={"fill", "saturated", "cloud", "cirrus"})
+    assert not default["valid"].values[1, 1] and not default["valid"].values[2, 2]
+    assert core["valid"].values[1, 1] and not core["valid"].values[2, 2]
+    assert core.attrs["qa_exclude"] == "cirrus,cloud,fill,saturated"
+    assert default.attrs["qa_exclude"] == "cirrus,cloud,cloud_buffer,cloud_shadow,fill,saturated"
+
+
+def test_unknown_qa_flag_raises(landsat_scene):
+    from spires_io.landsat import open_landsat_scene
+    with pytest.raises(ValueError, match="qa_exclude"):
+        open_landsat_scene(landsat_scene, qa_exclude={"cloud", "haze"})

@@ -8,12 +8,14 @@ import xarray as xr
 from spires_contract.spectra import validate_solar_angles, validate_target_spectra
 
 from spires_io.sensor_spec import (
+    DEFAULT_QA_EXCLUDE,
     GridMismatchError,
     Resampler,
     SceneLayoutError,
     SensorSpec,
     block_mean,
     nearest,
+    normalize_qa_exclude,
     resolution_m,
 )
 
@@ -70,6 +72,7 @@ def open_raster_scene(
     target_resolution_m: int | None = None,
     resampler: Resampler | None = None,
     bbox: tuple[float, float, float, float] | None = None,
+    qa_exclude=DEFAULT_QA_EXCLUDE,
 ) -> xr.Dataset:
     """Read, scale, resample, QA-decode and validate one scene.
 
@@ -78,9 +81,13 @@ def open_raster_scene(
     float32 degrees, all on one grid at ``target_resolution_m``. ``bbox`` is
     ``(minx, miny, maxx, maxy)`` in the scene CRS; bands and QA layers are
     clipped before resampling, so the output grid stays pixel-aligned with
-    the full scene.
+    the full scene. ``qa_exclude`` names the sensor-neutral QA flags
+    (``spires_io.sensor_spec.QA_FLAGS``) that make a pixel invalid; the default
+    excludes all of them, including the provider's cloud buffer and projected
+    cloud shadow, whose aggressiveness differs between QA products.
     """
     scene_dir = Path(scene_dir)
+    qa_exclude = normalize_qa_exclude(qa_exclude)
     names = list(bands) if bands is not None else list(spec.band_files)
     unknown = [n for n in names if n not in spec.band_files]
     if unknown:
@@ -109,7 +116,7 @@ def open_raster_scene(
         qa_raw = {n: clip_box(da, bbox) for n, da in qa_raw.items()}
     qa_on_grid = nearest(qa_raw, target_m)
     check_same_grid({**qa_on_grid, "_reflectance": template})
-    valid = spec.decode_qa({n: da.values for n, da in qa_on_grid.items()})
+    valid = spec.decode_qa({n: da.values for n, da in qa_on_grid.items()}, qa_exclude)
     stack = np.stack([on_grid[n].values for n in names], axis=-1)
     valid &= np.isfinite(stack).all(axis=-1)
 
@@ -145,6 +152,7 @@ def open_raster_scene(
             "acquisition_time": str(acquisition_time),
             "resolution_m": target_m,
             "source_product_id": scene_dir.name,
+            "qa_exclude": ",".join(sorted(qa_exclude)),
         },
     )
     return ds.rio.write_crs(template.rio.crs)

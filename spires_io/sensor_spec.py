@@ -21,6 +21,22 @@ class GridMismatchError(ValueError):
 # -> all bands on one shared grid at that resolution.
 Resampler = Callable[[dict[str, xr.DataArray], int], dict[str, xr.DataArray]]
 
+# Sensor-neutral QA flag names. Each spec's ``decode_qa`` maps the ones its QA
+# product carries onto bits or classes; names the product lacks are no-ops
+# (Sentinel-2 SCL has no cloud buffer). ``cloud_buffer`` is Landsat C2 "dilated
+# cloud" and HLS Fmask "adjacent to cloud/shadow".
+QA_FLAGS = ("fill", "saturated", "cloud", "cirrus", "cloud_buffer", "cloud_shadow")
+DEFAULT_QA_EXCLUDE = frozenset(QA_FLAGS)
+QaDecoder = Callable[[dict[str, np.ndarray], frozenset[str]], np.ndarray]
+
+
+def normalize_qa_exclude(exclude) -> frozenset[str]:
+    names = frozenset(exclude)
+    unknown = names - set(QA_FLAGS)
+    if unknown:
+        raise ValueError(f"unknown qa_exclude flag(s) {sorted(unknown)}; choose from {QA_FLAGS}")
+    return names
+
 
 @dataclass(frozen=True)
 class SensorSpec:
@@ -33,7 +49,7 @@ class SensorSpec:
     offset: float
     nodata: int | float
     qa_files: dict[str, str]                # QA layer name -> glob relative to scene_dir
-    decode_qa: Callable[[dict[str, np.ndarray]], np.ndarray]           # {layer: int array} -> bool valid
+    decode_qa: QaDecoder                    # ({layer: int array}, exclude flags) -> bool valid
     sza_provider: Callable[[Path, xr.DataArray], xr.DataArray]         # (scene_dir, grid template) -> degrees
     acquisition_time: Callable[[Path], np.datetime64]
     default_target_resolution_m: int
