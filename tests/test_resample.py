@@ -5,9 +5,10 @@ import rioxarray  # noqa: F401  # register the .rio accessor
 import xarray as xr
 from affine import Affine
 
-from spires_io.sensor_spec import block_mean, nearest
+from spires_io.sensor_spec import block_mean, nearest, snap_bbox_outward
 
 CRS = "EPSG:32611"
+ORIGIN = (300000.0, 4170000.0)   # upper-left of the fake UTM tile used across the offline tests
 
 
 def _grid(values, resolution_m, x0=300000.0, y0=4170000.0):
@@ -77,3 +78,28 @@ def test_block_mean_requires_downsampling():
     da = _grid(np.ones((2, 2), dtype=np.float32), 20)
     with pytest.raises(ValueError, match="coarser"):
         block_mean({"blue": da}, 10)
+
+
+def test_snap_bbox_outward_expands_off_lattice_bbox_to_60m_lattice():
+    # minx/maxy fall inside 60 m pixels on the origin lattice; min edges floor, max edges ceil.
+    snapped = snap_bbox_outward((300010.0, 4169850.0, 300130.0, 4169970.0), ORIGIN, 60)
+    assert snapped == pytest.approx((300000.0, 4169820.0, 300180.0, 4170000.0))
+    width_px = (snapped[2] - snapped[0]) / 60
+    height_px = (snapped[3] - snapped[1]) / 60
+    assert width_px == pytest.approx(3.0) and height_px == pytest.approx(3.0)
+
+
+def test_snap_bbox_outward_leaves_on_lattice_bbox_unchanged():
+    on_lattice = (300000.0, 4169880.0, 300120.0, 4170000.0)   # 2x2 pixels at 60 m
+    assert snap_bbox_outward(on_lattice, ORIGIN, 60) == pytest.approx(on_lattice)
+
+
+def test_snap_bbox_outward_ignores_float_noise_on_lattice_edges():
+    # Edges sitting 1e-7 m outside the lattice (float noise) must not expand by a whole 60 m pixel.
+    noisy = (300000.0 - 1e-7, 4169880.0 - 1e-7, 300120.0 + 1e-7, 4170000.0 + 1e-7)
+    assert snap_bbox_outward(noisy, ORIGIN, 60) == pytest.approx((300000.0, 4169880.0, 300120.0, 4170000.0))
+
+
+def test_snap_bbox_outward_rejects_inverted_bbox():
+    with pytest.raises(ValueError, match="min < max"):
+        snap_bbox_outward((300120.0, 4169880.0, 300000.0, 4170000.0), ORIGIN, 60)

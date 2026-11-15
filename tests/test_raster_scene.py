@@ -200,6 +200,37 @@ def test_bbox_none_is_full_scene(hls_l30_scene):
     assert open_hls_l30_scene(hls_l30_scene, bbox=None)["reflectance"].shape == (8, 8, 7)
 
 
+def test_off_lattice_bbox_snaps_outward_to_target_lattice(tmp_path):
+    # 30 m scene, 60 m target, lattice anchored at the scene's upper-left (300000, 4170000).
+    # Hand-snapped: x 300070..300130 -> 300060..300180; y 4169850..4169930 -> 4169820..4169940.
+    # Clipping at 30 m first would give an odd 3-px-wide window that block_mean cannot halve.
+    red = np.arange(64, dtype=np.int16).reshape(8, 8) + 1000
+    scene = write_fake_hls_scene(tmp_path, "L30", dn={"red": red})
+    full60 = open_hls_l30_scene(scene, target_resolution_m=60)
+    ds = open_hls_l30_scene(scene, target_resolution_m=60, bbox=(300070.0, 4169850.0, 300130.0, 4169930.0))
+    assert ds["reflectance"].shape == (2, 2, 7)
+    assert ds["valid"].shape == (2, 2)
+    assert ds["solar_zenith"].shape == (2, 2)
+    np.testing.assert_allclose(ds.x.values, [300090.0, 300150.0])
+    np.testing.assert_allclose(ds.y.values, [4169910.0, 4169850.0])
+    np.testing.assert_allclose(
+        ds["reflectance"].values,
+        full60["reflectance"].isel(y=slice(1, 3), x=slice(1, 3)).values,
+        rtol=1e-6,
+    )
+    validate_target_spectra(ds["reflectance"])
+    validate_solar_angles(ds["solar_zenith"])
+
+
+def test_off_lattice_bbox_on_mixed_resolution_scene_does_not_raise(sentinel2_scene):
+    # 20 m target over 10 m + 20 m bands: 10 m bands need an even pixel count per window,
+    # which holds only when the window is snapped to the 20 m lattice.
+    # Hand-snapped: x 300010..300130 -> 300000..300140 (7 px); y 4169850..4169970 -> 4169840..4169980 (7 px).
+    ds = open_sentinel2_scene(sentinel2_scene, bbox=(300010.0, 4169850.0, 300130.0, 4169970.0))
+    assert ds["reflectance"].shape == (7, 7, 10)
+    validate_target_spectra(ds["reflectance"])
+
+
 def test_sza_grid_offset_beyond_half_pixel_raises(hls_l30_scene):
     def shifted_sza(scene_dir, template):
         return xr.DataArray(

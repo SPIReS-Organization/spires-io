@@ -1,5 +1,6 @@
 # spires_io/sensor_spec.py
 """Declarative per-sensor description of a raster scene, plus grid resamplers."""
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -62,6 +63,30 @@ def on_grid(values: np.ndarray, template: xr.DataArray, target_m: int) -> xr.Dat
     y = transform.f - target_m * (np.arange(ny) + 0.5)
     out = xr.DataArray(values, dims=("y", "x"), coords={"y": y, "x": x}, attrs=template.attrs)
     return out.rio.write_crs(template.rio.crs)
+
+
+def snap_bbox_outward(
+    bbox: tuple[float, float, float, float],
+    origin: tuple[float, float],
+    res: int,
+) -> tuple[float, float, float, float]:
+    """Expand ``bbox = (minx, miny, maxx, maxy)`` outward onto the lattice of ``res``-metre pixels.
+
+    ``origin`` is the upper-left corner ``(x0, y0)`` of the target grid (the raster's own
+    transform origin); its pixel edges fall at ``x0 + k * res`` and ``y0 - k * res``. Min edges
+    floor and max edges ceil, so every window is a whole number of target-resolution pixels.
+    A bbox already on the lattice comes back unchanged.
+    """
+    minx, miny, maxx, maxy = bbox
+    if not (minx < maxx and miny < maxy):
+        raise ValueError(f"bbox must be (minx, miny, maxx, maxy) with min < max, got {bbox}")
+    x0, y0 = origin
+    eps = 1e-6   # in pixels: absorbs float noise so an on-lattice edge is not pushed out a whole pixel
+    left = math.floor((minx - x0) / res + eps)
+    right = math.ceil((maxx - x0) / res - eps)
+    top = math.floor((y0 - maxy) / res + eps)
+    bottom = math.ceil((y0 - miny) / res - eps)
+    return (x0 + res * left, y0 - res * bottom, x0 + res * right, y0 - res * top)
 
 
 def block_mean(bands: dict[str, xr.DataArray], target_m: int) -> dict[str, xr.DataArray]:
