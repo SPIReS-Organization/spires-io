@@ -1,4 +1,9 @@
 # tests/test_raster_scene.py
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -173,3 +178,37 @@ def test_sentinel2_scl_cloud_invalidates(tmp_path):
     scl[0, :] = 9
     ds = open_sentinel2_scene(write_fake_sentinel2_scene(tmp_path, qa={"scl": scl}))
     assert not ds["valid"].values[0].any() and ds["valid"].values[1:].all()
+
+
+_EXIT_NOISE_SCRIPT = """
+import sys
+from pathlib import Path
+from conftest import write_fake_hls_scene
+from spires_io.hls import open_hls_s30_scene
+
+root = Path(sys.argv[1])
+scenes = [write_fake_hls_scene(root / f"s{i}", "S30") for i in range(2)]
+datasets = [open_hls_s30_scene(scene) for scene in scenes]
+assert all(ds["reflectance"].shape == (8, 8, 11) for ds in datasets)
+"""
+
+
+def test_opening_scenes_leaves_no_handles_for_interpreter_exit(tmp_path):
+    # Unclosed rioxarray datasets are finalized during interpreter shutdown, where their
+    # finalizer noise is printed as empty "Error in sys.excepthook" blocks. The probe runs
+    # in a fresh interpreter so the shutdown path is the one being checked. The child is pinned
+    # to this checkout: cwd is the repo root and PYTHONSAFEPATH stops "-c" from putting cwd on
+    # sys.path, so an editable install elsewhere can never shadow the code under test.
+    repo_root = Path(__file__).resolve().parents[1]
+    tests_dir = repo_root / "tests"
+    env = {
+        **os.environ,
+        "PYTHONSAFEPATH": "1",
+        "PYTHONPATH": os.pathsep.join([str(repo_root), str(tests_dir)]),
+    }
+    proc = subprocess.run(
+        [sys.executable, "-c", _EXIT_NOISE_SCRIPT, str(tmp_path / "scenes")],
+        capture_output=True, text=True, env=env, cwd=repo_root, timeout=300,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "excepthook" not in proc.stderr, proc.stderr
