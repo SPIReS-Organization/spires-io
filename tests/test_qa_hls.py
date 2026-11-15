@@ -36,3 +36,15 @@ def test_shipped_sza_masks_fill_value(tmp_path):
     out = shipped_sza(scene, template)
     assert np.isnan(out.values[0, 0])
     assert np.allclose(out.values[1:, :], 45.0) and np.allclose(out.values[0, 1:], 45.0)
+
+
+@pytest.mark.parametrize("fmask, expected", [
+    (ADJACENT, True),                      # cloud_buffer not excluded
+    (SHADOW, True),                        # cloud_shadow not excluded
+    (CLOUD, False),
+    (CIRRUS, False),
+    (255, False),                          # fill
+])
+def test_decode_fmask_core_policy(fmask, expected):
+    exclude = frozenset({"fill", "saturated", "cloud", "cirrus"})
+    assert decode_qa({"fmask": np.array([[fmask]], np.uint8)}, exclude=exclude).tolist() == [[expected]]

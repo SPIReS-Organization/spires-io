@@ -6,11 +6,11 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-from spires_io.sensor_spec import SceneLayoutError, SensorSpec
+from spires_io.sensor_spec import DEFAULT_QA_EXCLUDE, SceneLayoutError, SensorSpec
 from spires_io.solar import per_pixel_sza_provider
 
 # QA_PIXEL bits (Landsat Collection 2 Level-2 Science Product Guide, table 6-3).
-_QA_PIXEL_INVALID_BITS = (0, 1, 2, 3, 4)   # fill, dilated cloud, cirrus, cloud, cloud shadow
+_QA_PIXEL_BITS = {"fill": 0, "cloud_buffer": 1, "cirrus": 2, "cloud": 3, "cloud_shadow": 4}
 # QA_RADSAT bit n-1 marks band n saturated; we use bands 2-7.
 _QA_RADSAT_INVALID_BITS = (1, 2, 3, 4, 5, 6)
 
@@ -20,11 +20,12 @@ def _any_bit_set(values: np.ndarray, bits) -> np.ndarray:
     return (values & mask) != 0
 
 
-def decode_qa(layers: dict[str, np.ndarray]) -> np.ndarray:
-    """True where the pixel may be inverted (not fill/cloud/shadow/cirrus and not saturated)."""
-    bad = _any_bit_set(layers["qa_pixel"], _QA_PIXEL_INVALID_BITS)
-    saturated = _any_bit_set(layers["qa_radsat"], _QA_RADSAT_INVALID_BITS)
-    return ~(bad | saturated)
+def decode_qa(layers: dict[str, np.ndarray], exclude: frozenset[str] = DEFAULT_QA_EXCLUDE) -> np.ndarray:
+    """True where the pixel may be inverted: none of the ``exclude`` flags is set."""
+    bad = _any_bit_set(layers["qa_pixel"], [bit for name, bit in _QA_PIXEL_BITS.items() if name in exclude])
+    if "saturated" in exclude:
+        bad |= _any_bit_set(layers["qa_radsat"], _QA_RADSAT_INVALID_BITS)
+    return ~bad
 
 
 def _mtl_path(scene_dir: Path) -> Path:

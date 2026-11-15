@@ -45,3 +45,16 @@ def test_item_without_boa_offset_applied_is_refused(tmp_path):
     scene = write_fake_sentinel2_scene(tmp_path, boa_offset_applied=False)
     with pytest.raises(ValueError, match="boa_offset_applied"):
         read_item(scene)
+
+
+@pytest.mark.parametrize("scl, expected", [
+    (3, True),     # cloud shadow kept when cloud_shadow is not excluded
+    (2, True),     # cast shadow likewise
+    (8, False),    # cloud still excluded
+    (10, False),   # cirrus still excluded
+    (0, False),    # no data
+    (1, False),    # saturated / defective
+])
+def test_decode_scl_core_policy(scl, expected):
+    exclude = frozenset({"fill", "saturated", "cloud", "cirrus", "cloud_buffer"})   # buffer is a no-op for SCL
+    assert decode_qa({"scl": np.array([[scl]], np.uint8)}, exclude=exclude).tolist() == [[expected]]

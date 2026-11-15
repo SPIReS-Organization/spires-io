@@ -5,18 +5,21 @@ import numpy as np
 import rasterio
 import xarray as xr
 
-from spires_io.sensor_spec import SensorSpec, nearest, resolution_m
+from spires_io.sensor_spec import DEFAULT_QA_EXCLUDE, SensorSpec, nearest, resolution_m
 
-# Fmask bits (HLS v2.0 User Guide, table 9).
-_FMASK_INVALID_BITS = (0, 1, 2, 3)   # cirrus, cloud, adjacent to cloud/shadow, cloud shadow
+# Fmask bits (HLS v2.0 User Guide, table 9). Fmask carries no saturation flag.
+_FMASK_BITS = {"cirrus": 0, "cloud": 1, "cloud_buffer": 2, "cloud_shadow": 3}
 _FMASK_FILL = 255
 _SZA_FILL = 40000   # HLS v2.0 SZA fill; the band carries no nodata tag
 
 
-def decode_qa(layers: dict[str, np.ndarray]) -> np.ndarray:
+def decode_qa(layers: dict[str, np.ndarray], exclude: frozenset[str] = DEFAULT_QA_EXCLUDE) -> np.ndarray:
     fmask = layers["fmask"]
-    mask = sum(1 << b for b in _FMASK_INVALID_BITS)
-    return ((fmask & mask) == 0) & (fmask != _FMASK_FILL)
+    mask = sum(1 << bit for name, bit in _FMASK_BITS.items() if name in exclude)
+    valid = (fmask & mask) == 0
+    if "fill" in exclude:
+        valid &= fmask != _FMASK_FILL
+    return valid
 
 
 def _first_band_path(scene_dir: Path) -> Path:

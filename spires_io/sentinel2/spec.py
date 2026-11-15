@@ -5,15 +5,23 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-from spires_io.sensor_spec import SceneLayoutError, SensorSpec
+from spires_io.sensor_spec import DEFAULT_QA_EXCLUDE, SceneLayoutError, SensorSpec
 from spires_io.solar import per_pixel_sza_provider
 
-# Scene Classification (SCL) classes that keep a pixel invertible.
-_SCL_VALID_CLASSES = (4, 5, 6, 7, 11)   # vegetation, not vegetated, water, unclassified, snow/ice
+# Scene Classification (SCL) classes by QA flag. SCL has no cloud-buffer class;
+# classes 4-7 and 11 (vegetation, not vegetated, water, unclassified, snow/ice) are always kept.
+_SCL_CLASSES = {
+    "fill": (0,),
+    "saturated": (1,),
+    "cloud_shadow": (2, 3),   # cast shadow, cloud shadow
+    "cloud": (8, 9),          # cloud medium / high probability
+    "cirrus": (10,),
+}
 
 
-def decode_qa(layers: dict[str, np.ndarray]) -> np.ndarray:
-    return np.isin(layers["scl"], _SCL_VALID_CLASSES)
+def decode_qa(layers: dict[str, np.ndarray], exclude: frozenset[str] = DEFAULT_QA_EXCLUDE) -> np.ndarray:
+    excluded = [c for name, classes in _SCL_CLASSES.items() if name in exclude for c in classes]
+    return ~np.isin(layers["scl"], excluded)
 
 
 def read_item(scene_dir: Path) -> dict:

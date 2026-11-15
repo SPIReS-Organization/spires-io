@@ -277,6 +277,29 @@ s2_10m = open_surface_reflectance(".../sentinel2/S2B_11SLB_20250420_0_L2A", sens
                                   target_resolution_m=10, resampler=my_super_resolver)       # any Resampler callable
 ```
 
+`valid` is decoded from the provider QA product through a sensor-neutral flag set,
+`spires_io.sensor_spec.QA_FLAGS` = `fill, saturated, cloud, cirrus, cloud_buffer,
+cloud_shadow`. By default every flag invalidates a pixel. Pass `qa_exclude=` to
+`open_surface_reflectance` (or any adapter) to choose a narrower policy; the chosen set is
+recorded in `ds.attrs["qa_exclude"]`:
+
+| Flag           | Landsat C2 `QA_PIXEL`         | HLS `Fmask`                   | Sentinel-2 `SCL`              |
+|----------------|-------------------------------|-------------------------------|-------------------------------|
+| `fill`         | bit 0                         | value 255                     | class 0                       |
+| `saturated`    | `QA_RADSAT` bits 1-6 (B2-B7)  | —                             | class 1                       |
+| `cloud`        | bit 3                         | bit 1                         | classes 8, 9                  |
+| `cirrus`       | bit 2                         | bit 0                         | class 10                      |
+| `cloud_buffer` | bit 1 (dilated cloud)         | bit 2 (adjacent to cloud)     | —                             |
+| `cloud_shadow` | bit 4                         | bit 3                         | classes 2, 3                  |
+
+The buffer and shadow flags are where the providers disagree most: Collection 2 dilates
+clouds and projects shadows aggressively over bright snow, Fmask in HLS much less so, and
+SCL has no buffer class at all, so the same acquisition can lose several times more pixels
+through one product than through another. For cross-sensor comparisons, use one explicit
+policy on every side, e.g.
+`qa_exclude={"fill", "saturated", "cloud", "cirrus"}`, and apply your own cloud mask
+downstream if the provider's buffer is not wanted.
+
 A `Resampler` is `Callable[[dict[str, DataArray], int], dict[str, DataArray]]`: all
 native-resolution bands in, all bands on the target grid out. `block_mean` (default when
 coarsening) and `nearest` ship with `spires_io.sensor_spec`; a super-resolver such as DSen2
