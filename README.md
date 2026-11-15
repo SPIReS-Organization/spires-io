@@ -271,7 +271,7 @@ QA decoder, acquisition time, solar-zenith provider). Registered adapters:
 ```python
 from spires_io.api import open_surface_reflectance
 
-ds = open_surface_reflectance("/scratch/spires/scenes/landsat/LC08_L2SP_042034_20240214_20240223_02_T1", sensor="landsat")
+ds = open_surface_reflectance("scenes/landsat/LC08_L2SP_042034_20240214_20240223_02_T1", sensor="landsat")
 s2 = open_surface_reflectance(".../sentinel2/S2B_11SLB_20250420_0_L2A", sensor="sentinel2")   # 20 m, 10 m bands block-averaged
 s2_10m = open_surface_reflectance(".../sentinel2/S2B_11SLB_20250420_0_L2A", sensor="sentinel2",
                                   target_resolution_m=10, resampler=my_super_resolver)       # any Resampler callable
@@ -282,13 +282,13 @@ native-resolution bands in, all bands on the target grid out. `block_mean` (defa
 coarsening) and `nearest` ship with `spires_io.sensor_spec`; a super-resolver such as DSen2
 is supplied by the caller and never imported here.
 
-Scene root convention: `/scratch/spires/scenes/<sensor>/<scene_id>/`. Adapters never
+Scene root convention: `<dest>/<sensor>/<scene_id>/`. Adapters never
 touch the network; `spires-fetch` (optional extra `pip install -e ".[fetch]"`) populates it:
 
 ```bash
-spires-fetch --dest /scratch/spires/scenes --aoi mammoth --start 2026-10-01 --end 2026-11-06 --max-scenes 1
-spires-fetch --dest /scratch/spires/scenes --scene-id HLS.L30.T11SLB.2026289T182301.v2.0   # exact ids, no search
-spires-fetch --dest /scratch/spires/scenes --aoi mammoth --dry-run                           # show the selection only
+spires-fetch --dest scenes --aoi mammoth --start 2026-10-01 --end 2026-11-06 --max-scenes 1
+spires-fetch --dest scenes --scene-id HLS.L30.T11SLB.2026289T182301.v2.0   # exact ids, no search
+spires-fetch --dest scenes --aoi mammoth --dry-run                           # show the selection only
 ```
 
 Sources: Landsat C2 L2 from Planetary Computer (anonymous SAS token), HLS v2.0 from
@@ -299,7 +299,7 @@ guessing the offset). Superseded reprocessings are dropped per satellite pass an
 is kept per date; scenes download into `<scene_id>.partial/` and are renamed into place only
 when complete. Original Copernicus SAFE products are not supported.
 
-Opt-in real-data tests: `SPIRES_SCENE_CACHE=/scratch/spires/scenes pytest -m real_data`.
+Opt-in real-data tests: `SPIRES_SCENE_CACHE=<dest> pytest -m real_data`.
 
 ## Solar and terrain illumination geometry
 

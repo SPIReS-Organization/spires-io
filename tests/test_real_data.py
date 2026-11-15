@@ -1,5 +1,5 @@
 # tests/test_real_data.py
-"""Opt-in: set SPIRES_SCENE_CACHE=/scratch/spires/scenes with one scene per sensor sub-directory."""
+"""Opt-in: set SPIRES_SCENE_CACHE=<dest> with one scene per sensor sub-directory."""
 import os
 from pathlib import Path
 

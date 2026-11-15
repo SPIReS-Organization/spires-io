@@ -19,7 +19,7 @@ import requests
 
 Bbox = tuple[float, float, float, float]   # W, S, E, N in degrees
 
-# Jeff Dozier Snow Study Site (formerly CUES), 37.643 N 119.029 W, +-0.02 deg; inside T11SLB / WRS-2 042034.
+# Mammoth Mountain, CA, +-0.02 deg; inside MGRS T11SLB / WRS-2 042034.
 AOIS: dict[str, Bbox] = {"mammoth": (-119.049, 37.623, -119.009, 37.663)}
 
 PC_ENDPOINT = "https://planetarycomputer.microsoft.com/api/stac/v1"

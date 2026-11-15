@@ -1,8 +1,7 @@
 # spires_io/fetch/search.py
 """Query STAC catalogs and pick one item per acquisition.
 
-The dedupe is two passes, ported from spipyservice ``target_chain.py``
-(``filter_latest_items`` / ``coverage_deduped_by_date``): first drop superseded
+The dedupe is two passes: first drop superseded
 reprocessings of the same satellite pass, then per calendar date keep the item
 covering most of the AOI. Pass 2 keeps one item per date across tiles and
 same-day overpasses alike. Pass 1 must not key on the date alone: S2A and S2B can
@@ -50,8 +49,8 @@ def one_per_date(source: Source, items: list[pystac.Item], bbox: Bbox) -> list[p
 
     This keeps ONE item per calendar date, whether the date has several tiles
     or several same-day overpasses. A same-day S2A/S2B pair on one tile is
-    intentionally reduced to the better-covering scene: spipyservice measured
-    the partial swath on T11SLB to be a strict subset of the full one, so the
+    intentionally reduced to the better-covering scene: on T11SLB the partial
+    swath was measured to be a strict subset of the full one, so the
     second scene adds nothing. Lowest catalog nodata fraction wins; items
     without one rank below any that have it and are ordered by bbox overlap
     with the AOI among themselves.
