@@ -26,7 +26,7 @@ jobs:
       - name: Install family deps not yet on PyPI
         run: |
           python -m pip install --upgrade pip
-          pip install "spires-contract @ git+https://github.com/SPIReS-Organization/spires-contract.git@main"
+          pip install "spires-contract @ git+https://github.com/SPIReS-Organization/spires-contract.git@v2.0.0"
 
       - name: Install package + test deps
         run: pip install ".[test]"
