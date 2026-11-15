@@ -43,7 +43,7 @@ def test_parse_modis_surface_reflectance_filename_rejects_unrecognized_names():
 
 
 def test_open_modis_surface_reflectance_requires_pyhdf_dependency(tmp_path):
-    path = Path("SpiPy/data/modis/inputs/terra/reflectance/MOD09GA.A2023075.h08v05.061.2023077031843.hdf")
+    path = Path("/path/to/data/data/modis/inputs/terra/reflectance/MOD09GA.A2023075.h08v05.061.2023077031843.hdf")
     if not path.exists():
         pytest.skip("Local MODIS sample file is not available")
 

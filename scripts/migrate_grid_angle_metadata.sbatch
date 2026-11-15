@@ -1,8 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=spires-grid-angle
-#SBATCH --partition=blanca-snow
-#SBATCH --account=blanca-snow
-#SBATCH --qos=blanca-snow
+# Site-specific scheduler settings: uncomment and set for your cluster.
+# #SBATCH --partition=<partition>
+# #SBATCH --account=<account>
+# #SBATCH --qos=<qos>
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=64
@@ -12,11 +13,11 @@
 
 set -euo pipefail
 
-repository=/projects/ropa5718/SPIReS-Organization/spires-io
-contract_repository=/projects/ropa5718/SPIReS-Organization/spires-contract
-archive_root=/scratch/alpine/ropa5718/spipy/output/noaa20-wy2023-2026/viirs/noaa20
+repository=${SPIRES_IO_REPO:?SPIRES_IO_REPO is required (path to a spires-io checkout)}
+contract_repository=${SPIRES_CONTRACT_REPO:?SPIRES_CONTRACT_REPO is required (path to a spires-contract checkout)}
+archive_root=${SPIRES_ARCHIVE_ROOT:?SPIRES_ARCHIVE_ROOT is required (path to the NOAA-20 VIIRS output tree)}
 run_directory=${SPIRES_MIGRATION_RUN_DIRECTORY:?SPIRES_MIGRATION_RUN_DIRECTORY is required}
-environment=/projects/ropa5718/software/anaconda/envs/spipy14
+environment=${SPIRES_PYTHON_ENV:?SPIRES_PYTHON_ENV is required (path to the conda/venv prefix with spires installed)}
 tiles=(h08v04 h08v05 h09v04 h09v05 h10v04)
 tile=${tiles[$SLURM_ARRAY_TASK_ID]}
 
