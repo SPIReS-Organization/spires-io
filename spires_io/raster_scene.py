@@ -28,9 +28,14 @@ def resolve_one(scene_dir: Path, name: str, pattern: str) -> Path:
 
 
 def read_band(path: Path) -> xr.DataArray:
-    """Single-band GeoTIFF/JP2 as a 2-D (y, x) DataArray, raw DN dtype, no masking."""
-    da = rioxarray.open_rasterio(path, masked=False)
-    return da.squeeze("band", drop=True).load()
+    """Single-band GeoTIFF/JP2 as a 2-D (y, x) DataArray, raw DN dtype, no masking.
+
+    The file handle is released before returning: the loaded array is fully in memory, and
+    an unclosed rioxarray dataset is only finalized during interpreter shutdown, where its
+    finalizer noise is printed to stderr.
+    """
+    with rioxarray.open_rasterio(path, masked=False) as da:
+        return da.squeeze("band", drop=True).load()
 
 
 def to_reflectance(da: xr.DataArray, scale: float, offset: float, nodata) -> xr.DataArray:
