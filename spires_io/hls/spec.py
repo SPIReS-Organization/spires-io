@@ -47,12 +47,11 @@ def shipped_sza(scene_dir: Path, template: xr.DataArray) -> xr.DataArray:
 
 
 _L30_BANDS = {"coastal": "B01", "blue": "B02", "green": "B03", "red": "B04", "nir": "B05", "swir1": "B06", "swir2": "B07"}
-_S30_BANDS = {"coastal": "B01", "blue": "B02", "green": "B03", "red": "B04", "red_edge1": "B05",
-              "red_edge2": "B06", "red_edge3": "B07", "nir": "B08", "nir_narrow": "B8A",
-              "swir1": "B11", "swir2": "B12"}
+# S30 is restricted to the seven bands HLS bandpass-adjusts toward OLI (the bands it shares with L30).
+# The red-edge bands (B05-B07) and broad NIR (B08) are unadjusted MSI, so they are deliberately excluded.
+_S30_BANDS = {"coastal": "B01", "blue": "B02", "green": "B03", "red": "B04", "nir": "B8A", "swir1": "B11", "swir2": "B12"}
 _L30_WAVELENGTH_NM = {"coastal": 443.0, "blue": 482.0, "green": 561.0, "red": 655.0, "nir": 865.0, "swir1": 1609.0, "swir2": 2201.0}
-_S30_WAVELENGTH_NM = {"coastal": 442.7, "blue": 492.4, "green": 559.8, "red": 664.6, "red_edge1": 704.1,
-                      "red_edge2": 740.5, "red_edge3": 782.8, "nir": 832.8, "nir_narrow": 864.7,
+_S30_WAVELENGTH_NM = {"coastal": 442.7, "blue": 492.4, "green": 559.8, "red": 664.6, "nir": 864.7,
                       "swir1": 1613.7, "swir2": 2202.4}
 
 

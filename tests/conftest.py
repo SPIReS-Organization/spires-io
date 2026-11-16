@@ -59,9 +59,7 @@ def write_fake_landsat_scene(root: Path, *, dn=4000, qa=None, shape=SHAPE) -> Pa
 
 
 HLS_L30_BANDS = {"coastal": "B01", "blue": "B02", "green": "B03", "red": "B04", "nir": "B05", "swir1": "B06", "swir2": "B07"}
-HLS_S30_BANDS = {"coastal": "B01", "blue": "B02", "green": "B03", "red": "B04", "red_edge1": "B05",
-                 "red_edge2": "B06", "red_edge3": "B07", "nir": "B08", "nir_narrow": "B8A",
-                 "swir1": "B11", "swir2": "B12"}
+HLS_S30_BANDS = {"coastal": "B01", "blue": "B02", "green": "B03", "red": "B04", "nir": "B8A", "swir1": "B11", "swir2": "B12"}
 
 
 def write_fake_hls_scene(root: Path, product="L30", *, dn=4000, qa=None, sza=45.0, shape=SHAPE) -> Path:

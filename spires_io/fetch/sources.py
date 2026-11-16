@@ -121,7 +121,7 @@ SOURCES: dict[str, Source] = {
     "hls_l30": _hls_source("hls_l30", "HLSL30_2.0",
                            ("B01", "B02", "B03", "B04", "B05", "B06", "B07", "Fmask", "SZA")),
     "hls_s30": _hls_source("hls_s30", "HLSS30_2.0",
-                           ("B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B11", "B12", "Fmask", "SZA")),
+                           ("B01", "B02", "B03", "B04", "B8A", "B11", "B12", "Fmask", "SZA")),
     "sentinel2": Source(
         sensor="sentinel2", endpoint=EARTH_SEARCH_ENDPOINT, collection="sentinel-2-l2a",
         assets=("blue", "green", "red", "rededge1", "rededge2", "rededge3", "nir", "nir08", "swir16", "swir22", "scl"),

@@ -120,8 +120,7 @@ def test_hls_l30_contract_and_values(hls_l30_scene):
 
 def test_hls_s30_bands(hls_s30_scene):
     ds = open_hls_s30_scene(hls_s30_scene)
-    assert list(ds.band.values) == ["coastal", "blue", "green", "red", "red_edge1", "red_edge2",
-                                    "red_edge3", "nir", "nir_narrow", "swir1", "swir2"]
+    assert list(ds.band.values) == ["coastal", "blue", "green", "red", "nir", "swir1", "swir2"]
     assert ds.attrs["sensor"] == "hls_s30"
 
 
@@ -189,7 +188,7 @@ from spires_io.hls import open_hls_s30_scene
 root = Path(sys.argv[1])
 scenes = [write_fake_hls_scene(root / f"s{i}", "S30") for i in range(2)]
 datasets = [open_hls_s30_scene(scene) for scene in scenes]
-assert all(ds["reflectance"].shape == (8, 8, 11) for ds in datasets)
+assert all(ds["reflectance"].shape == (8, 8, 7) for ds in datasets)
 """
 
 
