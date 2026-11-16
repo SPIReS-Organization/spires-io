@@ -52,7 +52,7 @@ def landsat_item(item_id="LC08_L2SP_042034_20240214_02_T1", when="2024-02-14T18:
 
 # ---- CMR-STAC LPCLOUD HLSL30_2.0 / HLSS30_2.0 ---------------------------------
 HLS_L30_CODES = ("B01", "B02", "B03", "B04", "B05", "B06", "B07", "Fmask", "SZA")
-HLS_S30_CODES = ("B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B11", "B12", "Fmask", "SZA")
+HLS_S30_CODES = ("B01", "B02", "B03", "B04", "B8A", "B11", "B12", "Fmask", "SZA")
 
 
 def hls_item(product="L30", tile="T11SLB", stamp="2024045T182301", when="2024-02-14T18:23:01Z",

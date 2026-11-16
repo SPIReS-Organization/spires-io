@@ -265,7 +265,7 @@ QA decoder, acquisition time, solar-zenith provider). Registered adapters:
 |--------------|-----------------------------------------------------------------|-----------------------------------|
 | `landsat`    | Collection 2 Level-2 bundle: `*_SR_B2..B7.TIF`, `*_QA_PIXEL.TIF`, `*_QA_RADSAT.TIF`, `*_MTL.txt` | computed per pixel (`spires_io.solar`) |
 | `hls_l30`    | `HLS.L30.*.v2.0.B01..B07.tif`, `.Fmask.tif`, `.SZA.tif`           | shipped `SZA` band                |
-| `hls_s30`    | `HLS.S30.*.v2.0.B01..B07.tif`, `B08.tif`, `B8A.tif`, `B11.tif`, `B12.tif`, `.Fmask.tif`, `.SZA.tif` | shipped `SZA` band                |
+| `hls_s30`    | `HLS.S30.*.v2.0.B01..B04.tif`, `B8A.tif`, `B11.tif`, `B12.tif`, `.Fmask.tif`, `.SZA.tif` | shipped `SZA` band                |
 | `sentinel2`  | Element84 Earth Search COGs: `B02.tif … B12.tif`, `SCL.tif`, plus the STAC item as `item.json` | computed per pixel (`spires_io.solar`) |
 
 ```python
