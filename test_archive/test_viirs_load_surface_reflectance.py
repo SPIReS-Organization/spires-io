@@ -180,13 +180,13 @@ def test_parse_viirs_surface_reflectance_filename_vj2():
 
 def test_infer_viirs_lut_band_names_from_path():
     bands = infer_viirs_lut_band_names_from_path(
-        "SpiPy/tests/data/lut_viirs_noaa20_i1_i2_i3_m2_m4_m8_m11_3um_dust_bandpass.mat"
+        "/path/to/data/tests/data/lut_viirs_noaa20_i1_i2_i3_m2_m4_m8_m11_3um_dust_bandpass.mat"
     )
     assert bands == ["I1", "I2", "I3", "M2", "M4", "M8", "M11"]
 
 
 def test_infer_viirs_lut_band_names_from_path_returns_none_without_band_tokens():
-    bands = infer_viirs_lut_band_names_from_path("SpiPy/tests/data/lut_viirs_noaa20.mat")
+    bands = infer_viirs_lut_band_names_from_path("/path/to/data/tests/data/lut_viirs_noaa20.mat")
     assert bands is None
 
 
@@ -203,7 +203,7 @@ def test_resolve_viirs_inversion_bands_prefers_metadata_over_filename(monkeypatc
     )
 
     bands = viirs_bands.resolve_viirs_inversion_bands(
-        lut_file="SpiPy/tests/data/lut_viirs_noaa20_i1_i2_i3_m2.mat"
+        lut_file="/path/to/data/tests/data/lut_viirs_noaa20_i1_i2_i3_m2.mat"
     )
 
     assert bands == ["I1", "I2", "M4"]
@@ -221,7 +221,7 @@ def test_resolve_viirs_inversion_bands_falls_back_to_all_available_bands(monkeyp
         lambda path: None,
     )
 
-    bands = viirs_bands.resolve_viirs_inversion_bands(lut_file="SpiPy/tests/data/lut_viirs_noaa20.mat")
+    bands = viirs_bands.resolve_viirs_inversion_bands(lut_file="/path/to/data/tests/data/lut_viirs_noaa20.mat")
 
     assert bands == list(viirs_bands.VIIRS_ANALYSIS_BANDS)
 
@@ -231,7 +231,7 @@ def test_prepare_viirs_scene_for_inversion_can_subset_bands_from_lut_path():
 
     ds = prepare_viirs_scene_for_inversion(
         raw,
-        lut_file="SpiPy/tests/data/lut_viirs_noaa20_i1_i2_i3_m2_m4_m8_m11_3um_dust_bandpass.mat",
+        lut_file="/path/to/data/tests/data/lut_viirs_noaa20_i1_i2_i3_m2_m4_m8_m11_3um_dust_bandpass.mat",
     )
 
     assert list(ds["band"].values) == ["I1", "I2", "I3", "M2", "M4", "M8", "M11"]
@@ -282,7 +282,7 @@ def test_open_viirs_surface_reflectance_reads_only_requested_lut_bands(tmp_path)
 
     ds = open_viirs_surface_reflectance(
         path,
-        lut_file="SpiPy/tests/data/lut_viirs_noaa20_i1_i2_i3_m2_m4_m8_m11_3um_dust_bandpass.mat",
+        lut_file="/path/to/data/tests/data/lut_viirs_noaa20_i1_i2_i3_m2_m4_m8_m11_3um_dust_bandpass.mat",
     )
 
     assert list(ds["band_500m"].values) == ["I1", "I2", "I3"]
@@ -306,7 +306,7 @@ def test_prepare_viirs_scene_for_inversion_preserves_spatial_ref(tmp_path):
 
     ds = prepare_viirs_scene_for_inversion(
         path,
-        lut_file="SpiPy/tests/data/lut_viirs_noaa20_i1_i2_i3_m2_m4_m8_m11_3um_dust_bandpass.mat",
+        lut_file="/path/to/data/tests/data/lut_viirs_noaa20_i1_i2_i3_m2_m4_m8_m11_3um_dust_bandpass.mat",
     )
 
     assert "spatial_ref" in ds
