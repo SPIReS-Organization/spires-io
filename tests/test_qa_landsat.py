@@ -69,3 +69,13 @@ def test_decode_qa_default_exclude_matches_conservative_policy():
     layers = {"qa_pixel": np.array([[CLEAR | DILATED, CLEAR | SHADOW, CLEAR]], np.uint16),
               "qa_radsat": np.zeros((1, 3), np.uint16)}
     assert decode_qa(layers).tolist() == decode_qa(layers, exclude=DEFAULT_QA_EXCLUDE).tolist() == [[False, False, True]]
+
+
+from spires_contract.qa import QA_FLAGS, QA_INVALID_FLAGS
+from spires_io.sensor_spec import DEFAULT_QA_EXCLUDE, QA_FLAGS as IO_QA_FLAGS
+
+
+def test_qa_vocabulary_is_the_contract_vocabulary():
+    assert IO_QA_FLAGS is QA_FLAGS
+    assert DEFAULT_QA_EXCLUDE == frozenset(QA_INVALID_FLAGS)
+    assert "snow" not in DEFAULT_QA_EXCLUDE

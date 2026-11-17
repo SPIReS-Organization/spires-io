@@ -7,6 +7,7 @@ from typing import Callable
 import numpy as np
 import rioxarray  # noqa: F401  # register the .rio accessor
 import xarray as xr
+from spires_contract.qa import QA_FLAGS, QA_INVALID_FLAGS
 
 
 class SceneLayoutError(FileNotFoundError):
@@ -21,12 +22,13 @@ class GridMismatchError(ValueError):
 # -> all bands on one shared grid at that resolution.
 Resampler = Callable[[dict[str, xr.DataArray], int], dict[str, xr.DataArray]]
 
-# Sensor-neutral QA flag names. Each spec's ``decode_qa`` maps the ones its QA
+# Sensor-neutral QA flag names, owned by spires-contract so the io and qa_mask
+# layers cannot drift apart. Each spec's ``decode_qa`` maps the ones its QA
 # product carries onto bits or classes; names the product lacks are no-ops
 # (Sentinel-2 SCL has no cloud buffer). ``cloud_buffer`` is Landsat C2 "dilated
-# cloud" and HLS Fmask "adjacent to cloud/shadow".
-QA_FLAGS = ("fill", "saturated", "cloud", "cirrus", "cloud_buffer", "cloud_shadow")
-DEFAULT_QA_EXCLUDE = frozenset(QA_FLAGS)
+# cloud" and HLS Fmask "adjacent to cloud/shadow". ``snow`` and ``water`` are
+# descriptive and never invalidate a pixel, so they are not in the default exclude.
+DEFAULT_QA_EXCLUDE = frozenset(QA_INVALID_FLAGS)
 QaDecoder = Callable[[dict[str, np.ndarray], frozenset[str]], np.ndarray]
 
 
