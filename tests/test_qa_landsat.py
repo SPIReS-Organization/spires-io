@@ -69,3 +69,57 @@ def test_decode_qa_default_exclude_matches_conservative_policy():
     layers = {"qa_pixel": np.array([[CLEAR | DILATED, CLEAR | SHADOW, CLEAR]], np.uint16),
               "qa_radsat": np.zeros((1, 3), np.uint16)}
     assert decode_qa(layers).tolist() == decode_qa(layers, exclude=DEFAULT_QA_EXCLUDE).tolist() == [[False, False, True]]
+
+
+from spires_contract.qa import QA_FLAGS, QA_INVALID_FLAGS
+from spires_io.sensor_spec import DEFAULT_QA_EXCLUDE, QA_FLAGS as IO_QA_FLAGS
+
+
+def test_qa_vocabulary_is_the_contract_vocabulary():
+    assert IO_QA_FLAGS is QA_FLAGS
+    assert DEFAULT_QA_EXCLUDE == frozenset(QA_INVALID_FLAGS)
+    assert "snow" not in DEFAULT_QA_EXCLUDE
+
+
+from spires_io.landsat.spec import decode_qa_flags, QA_FLAGS_AVAILABLE
+
+
+def test_decode_qa_flags_landsat_bits():
+    qa_pixel = np.array([[1 << 3, 1 << 5, 1 << 7, 0]], np.uint16)   # cloud, snow, water, clear
+    radsat = np.array([[0, 0, 0, 1 << 2]], np.uint16)                 # last px saturated
+    f = decode_qa_flags({"qa_pixel": qa_pixel, "qa_radsat": radsat})
+    assert set(f) == set(QA_FLAGS)
+    assert f["cloud"].tolist() == [[True, False, False, False]]
+    assert f["snow"].tolist() == [[False, True, False, False]]
+    assert f["water"].tolist() == [[False, False, True, False]]
+    assert f["saturated"].tolist() == [[False, False, False, True]]
+    assert QA_FLAGS_AVAILABLE == QA_FLAGS
+
+
+def test_decode_qa_ignores_unknown_exclude_names():
+    # Before the qa_mask change, names outside QA_FLAGS excluded nothing.
+    layers = {"qa_pixel": np.array([[CLEAR, CLOUD]], np.uint16), "qa_radsat": np.zeros((1, 2), np.uint16)}
+    assert decode_qa(layers, exclude=frozenset({"haze"})).tolist() == [[True, True]]
+    assert decode_qa(layers, exclude=frozenset({"haze", "cloud"})).tolist() == [[True, False]]
+
+
+def test_decode_qa_without_qa_radsat():
+    # QA_RADSAT is read only when saturation is excluded. Without it, a policy
+    # that excludes saturation still raises, as base did, instead of silently
+    # passing saturated pixels as valid.
+    from spires_io.sensor_spec import DEFAULT_QA_EXCLUDE
+    layers = {"qa_pixel": np.array([[CLEAR, CLOUD]], np.uint16)}
+    assert not decode_qa_flags(layers)["saturated"].any()
+    assert decode_qa(layers, exclude=DEFAULT_QA_EXCLUDE - {"saturated"}).tolist() == [[True, False]]
+    with pytest.raises(KeyError, match="qa_radsat"):
+        decode_qa(layers)
+
+
+def test_flags_to_layers_fills_missing_flags_and_rejects_unknown():
+    from spires_io.sensor_spec import flags_to_layers
+    shape = (2, 2)
+    out = flags_to_layers({"cloud": np.ones(shape, bool)}, shape)
+    assert list(out) == list(QA_FLAGS)
+    assert out["cloud"].all() and not out["snow"].any()
+    with pytest.raises(ValueError, match="not in QA_FLAGS"):
+        flags_to_layers({"haze": np.ones(shape, bool)}, shape)

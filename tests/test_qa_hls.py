@@ -48,3 +48,20 @@ def test_shipped_sza_masks_fill_value(tmp_path):
 def test_decode_fmask_core_policy(fmask, expected):
     exclude = frozenset({"fill", "saturated", "cloud", "cirrus"})
     assert decode_qa({"fmask": np.array([[fmask]], np.uint8)}, exclude=exclude).tolist() == [[expected]]
+
+
+from spires_contract.qa import QA_FLAGS
+from spires_io.hls.spec import decode_qa_flags, QA_FLAGS_AVAILABLE
+
+
+def test_decode_qa_flags_hls_fmask_bits():
+    # Fmask 255 is the fill value and has every bit set, so cloud/snow/water are also
+    # True at the fill pixel. Check each flag at the pixel it was written for.
+    fmask = np.array([[1 << 1, 1 << 4, 1 << 5, 255]], np.uint8)   # cloud, snow, water, fill
+    f = decode_qa_flags({"fmask": fmask})
+    assert set(f) == set(QA_FLAGS)
+    assert f["cloud"][0, 0] and not f["cloud"][0, 1] and not f["cloud"][0, 2]
+    assert f["snow"][0, 1] and not f["snow"][0, 0] and not f["snow"][0, 2]
+    assert f["water"][0, 2] and not f["water"][0, 0] and not f["water"][0, 1]
+    assert f["fill"].tolist() == [[False, False, False, True]]
+    assert QA_FLAGS_AVAILABLE == tuple(f for f in QA_FLAGS if f != "saturated")

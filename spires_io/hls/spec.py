@@ -5,21 +5,34 @@ import numpy as np
 import rasterio
 import xarray as xr
 
-from spires_io.sensor_spec import DEFAULT_QA_EXCLUDE, SensorSpec, nearest, resolution_m
+from spires_io.sensor_spec import (
+    DEFAULT_QA_EXCLUDE,
+    QA_FLAGS,
+    SensorSpec,
+    flags_to_layers,
+    nearest,
+    resolution_m,
+    valid_from_flags,
+)
 
-# Fmask bits (HLS v2.0 User Guide, table 9). Fmask carries no saturation flag.
-_FMASK_BITS = {"cirrus": 0, "cloud": 1, "cloud_buffer": 2, "cloud_shadow": 3}
+# Fmask bits (HLS v2.0 User Guide, table 9). Fmask carries no saturation flag, so
+# ``saturated`` is absent from QA_FLAGS_AVAILABLE and always all-False.
+_FMASK_BITS = {"cirrus": 0, "cloud": 1, "cloud_buffer": 2, "cloud_shadow": 3, "snow": 4, "water": 5}
 _FMASK_FILL = 255
 _SZA_FILL = 40000   # HLS v2.0 SZA fill; the band carries no nodata tag
+QA_FLAGS_AVAILABLE = tuple(f for f in QA_FLAGS if f != "saturated")
+
+
+def decode_qa_flags(layers: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """One bool plane per QA_FLAGS entry, from the Fmask bits and the fill value 255."""
+    fmask = layers["fmask"]
+    flags = {name: (fmask & (1 << bit)) != 0 for name, bit in _FMASK_BITS.items()}
+    flags["fill"] = fmask == _FMASK_FILL
+    return flags_to_layers(flags, fmask.shape)
 
 
 def decode_qa(layers: dict[str, np.ndarray], exclude: frozenset[str] = DEFAULT_QA_EXCLUDE) -> np.ndarray:
-    fmask = layers["fmask"]
-    mask = sum(1 << bit for name, bit in _FMASK_BITS.items() if name in exclude)
-    valid = (fmask & mask) == 0
-    if "fill" in exclude:
-        valid &= fmask != _FMASK_FILL
-    return valid
+    return valid_from_flags(decode_qa_flags(layers), exclude)
 
 
 def _first_band_path(scene_dir: Path) -> Path:
@@ -71,6 +84,9 @@ def _spec(sensor, platforms, bands, wavelengths) -> SensorSpec:
         nodata=-9999,
         qa_files={"fmask": "*.Fmask.tif"},
         decode_qa=decode_qa,
+        decode_qa_flags=decode_qa_flags,
+        qa_flags_available=QA_FLAGS_AVAILABLE,
+        qa_source="Fmask",
         sza_provider=shipped_sza,
         acquisition_time=read_acquisition_time,
         default_target_resolution_m=30,

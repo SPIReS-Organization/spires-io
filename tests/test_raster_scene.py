@@ -230,3 +230,17 @@ def test_unknown_qa_flag_raises(landsat_scene):
     from spires_io.landsat import open_landsat_scene
     with pytest.raises(ValueError, match="qa_exclude"):
         open_landsat_scene(landsat_scene, qa_exclude={"cloud", "haze"})
+
+
+def test_open_raster_scene_emits_qa_mask(landsat_scene):
+    from spires_contract.qa import QA_FLAGS, validate_qa_mask
+    from spires_io.sensor_spec import DEFAULT_QA_EXCLUDE
+    ds = open_landsat_scene(landsat_scene)
+    qa = ds["qa_mask"]
+    validate_qa_mask(qa)
+    assert qa.dims == ("flag", "y", "x")
+    assert list(qa["flag"].values) == list(QA_FLAGS)
+    assert qa.attrs["qa_source"]
+    assert set(qa.attrs["qa_flags_available"].split()) <= set(QA_FLAGS)
+    invalid = qa.sel(flag=list(DEFAULT_QA_EXCLUDE)).any("flag")
+    assert not bool((ds["valid"] & invalid).any())
