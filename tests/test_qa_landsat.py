@@ -79,3 +79,28 @@ def test_qa_vocabulary_is_the_contract_vocabulary():
     assert IO_QA_FLAGS is QA_FLAGS
     assert DEFAULT_QA_EXCLUDE == frozenset(QA_INVALID_FLAGS)
     assert "snow" not in DEFAULT_QA_EXCLUDE
+
+
+from spires_io.landsat.spec import decode_qa_flags, QA_FLAGS_AVAILABLE
+
+
+def test_decode_qa_flags_landsat_bits():
+    qa_pixel = np.array([[1 << 3, 1 << 5, 1 << 7, 0]], np.uint16)   # cloud, snow, water, clear
+    radsat = np.array([[0, 0, 0, 1 << 2]], np.uint16)                 # last px saturated
+    f = decode_qa_flags({"qa_pixel": qa_pixel, "qa_radsat": radsat})
+    assert set(f) == set(QA_FLAGS)
+    assert f["cloud"].tolist() == [[True, False, False, False]]
+    assert f["snow"].tolist() == [[False, True, False, False]]
+    assert f["water"].tolist() == [[False, False, True, False]]
+    assert f["saturated"].tolist() == [[False, False, False, True]]
+    assert QA_FLAGS_AVAILABLE == QA_FLAGS
+
+
+def test_flags_to_layers_fills_missing_flags_and_rejects_unknown():
+    from spires_io.sensor_spec import flags_to_layers
+    shape = (2, 2)
+    out = flags_to_layers({"cloud": np.ones(shape, bool)}, shape)
+    assert list(out) == list(QA_FLAGS)
+    assert out["cloud"].all() and not out["snow"].any()
+    with pytest.raises(ValueError, match="not in QA_FLAGS"):
+        flags_to_layers({"haze": np.ones(shape, bool)}, shape)

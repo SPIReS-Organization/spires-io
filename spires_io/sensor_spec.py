@@ -30,6 +30,7 @@ Resampler = Callable[[dict[str, xr.DataArray], int], dict[str, xr.DataArray]]
 # descriptive and never invalidate a pixel, so they are not in the default exclude.
 DEFAULT_QA_EXCLUDE = frozenset(QA_INVALID_FLAGS)
 QaDecoder = Callable[[dict[str, np.ndarray], frozenset[str]], np.ndarray]
+QaFlagDecoder = Callable[[dict[str, np.ndarray]], dict[str, np.ndarray]]
 
 
 def normalize_qa_exclude(exclude) -> frozenset[str]:
@@ -38,6 +39,22 @@ def normalize_qa_exclude(exclude) -> frozenset[str]:
     if unknown:
         raise ValueError(f"unknown qa_exclude flag(s) {sorted(unknown)}; choose from {QA_FLAGS}")
     return names
+
+
+def flags_to_layers(flags: dict[str, np.ndarray], shape: tuple[int, int]) -> dict[str, np.ndarray]:
+    """Fill every QA_FLAGS entry: missing flags become all-False planes."""
+    unknown = set(flags) - set(QA_FLAGS)
+    if unknown:
+        raise ValueError(f"decoder produced flag(s) not in QA_FLAGS: {sorted(unknown)}")
+    return {f: flags.get(f, np.zeros(shape, dtype=bool)) for f in QA_FLAGS}
+
+
+def valid_from_flags(flags: dict[str, np.ndarray], exclude: frozenset[str]) -> np.ndarray:
+    """True where none of the ``exclude`` flags is set. Every sensor's ``decode_qa`` goes through this."""
+    bad = np.zeros(flags["fill"].shape, dtype=bool)
+    for name in exclude:
+        bad |= flags[name]
+    return ~bad
 
 
 @dataclass(frozen=True)
@@ -52,6 +69,9 @@ class SensorSpec:
     nodata: int | float
     qa_files: dict[str, str]                # QA layer name -> glob relative to scene_dir
     decode_qa: QaDecoder                    # ({layer: int array}, exclude flags) -> bool valid
+    decode_qa_flags: QaFlagDecoder          # ({layer: int array}) -> {flag: bool array}, every QA_FLAGS entry
+    qa_flags_available: tuple[str, ...]     # flags the product can express; the rest are all-False
+    qa_source: str                          # provenance of the flags, e.g. "QA_PIXEL", "Fmask", "SCL"
     sza_provider: Callable[[Path, xr.DataArray], xr.DataArray]         # (scene_dir, grid template) -> degrees
     acquisition_time: Callable[[Path], np.datetime64]
     default_target_resolution_m: int

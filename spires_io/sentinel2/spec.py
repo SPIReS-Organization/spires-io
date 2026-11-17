@@ -5,23 +5,40 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-from spires_io.sensor_spec import DEFAULT_QA_EXCLUDE, SceneLayoutError, SensorSpec
+from spires_io.sensor_spec import (
+    DEFAULT_QA_EXCLUDE,
+    QA_FLAGS,
+    SceneLayoutError,
+    SensorSpec,
+    flags_to_layers,
+    valid_from_flags,
+)
 from spires_io.solar import per_pixel_sza_provider
 
-# Scene Classification (SCL) classes by QA flag. SCL has no cloud-buffer class;
-# classes 4-7 and 11 (vegetation, not vegetated, water, unclassified, snow/ice) are always kept.
+# Scene Classification (SCL) classes by QA flag. SCL has no cloud-buffer class, so
+# ``cloud_buffer`` is absent from QA_FLAGS_AVAILABLE. Classes 4-5 (vegetation, not
+# vegetated) and 7 (unclassified) carry no flag and stay valid.
 _SCL_CLASSES = {
     "fill": (0,),
     "saturated": (1,),
     "cloud_shadow": (2, 3),   # cast shadow, cloud shadow
     "cloud": (8, 9),          # cloud medium / high probability
     "cirrus": (10,),
+    "water": (6,),
+    "snow": (11,),            # snow / ice
 }
+QA_FLAGS_AVAILABLE = tuple(f for f in QA_FLAGS if f != "cloud_buffer")
+
+
+def decode_qa_flags(layers: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """One bool plane per SCL-expressible flag; ``cloud_buffer`` is filled as all-False."""
+    scl = layers["scl"]
+    flags = {name: np.isin(scl, classes) for name, classes in _SCL_CLASSES.items()}
+    return flags_to_layers(flags, scl.shape)
 
 
 def decode_qa(layers: dict[str, np.ndarray], exclude: frozenset[str] = DEFAULT_QA_EXCLUDE) -> np.ndarray:
-    excluded = [c for name, classes in _SCL_CLASSES.items() if name in exclude for c in classes]
-    return ~np.isin(layers["scl"], excluded)
+    return valid_from_flags(decode_qa_flags(layers), exclude)
 
 
 def read_item(scene_dir: Path) -> dict:
@@ -69,6 +86,9 @@ SPEC = SensorSpec(
     nodata=0,
     qa_files={"scl": "SCL.tif"},
     decode_qa=decode_qa,
+    decode_qa_flags=decode_qa_flags,
+    qa_flags_available=QA_FLAGS_AVAILABLE,
+    qa_source="SCL",
     sza_provider=per_pixel_sza_provider(read_acquisition_time),
     acquisition_time=read_acquisition_time,
     default_target_resolution_m=20,

@@ -58,3 +58,18 @@ def test_item_without_boa_offset_applied_is_refused(tmp_path):
 def test_decode_scl_core_policy(scl, expected):
     exclude = frozenset({"fill", "saturated", "cloud", "cirrus", "cloud_buffer"})   # buffer is a no-op for SCL
     assert decode_qa({"scl": np.array([[scl]], np.uint8)}, exclude=exclude).tolist() == [[expected]]
+
+
+from spires_contract.qa import QA_FLAGS
+from spires_io.sentinel2.spec import decode_qa_flags, QA_FLAGS_AVAILABLE
+
+
+def test_decode_qa_flags_sentinel2_scl_classes():
+    scl = np.array([[9, 11, 6, 0]], np.uint8)   # cloud, snow, water, no data
+    f = decode_qa_flags({"scl": scl})
+    assert set(f) == set(QA_FLAGS)
+    assert f["cloud"].tolist() == [[True, False, False, False]]
+    assert f["snow"].tolist() == [[False, True, False, False]]
+    assert f["water"].tolist() == [[False, False, True, False]]
+    assert f["fill"].tolist() == [[False, False, False, True]]
+    assert QA_FLAGS_AVAILABLE == tuple(f for f in QA_FLAGS if f != "cloud_buffer")

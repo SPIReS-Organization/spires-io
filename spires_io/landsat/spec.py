@@ -6,13 +6,23 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-from spires_io.sensor_spec import DEFAULT_QA_EXCLUDE, SceneLayoutError, SensorSpec
+from spires_io.sensor_spec import (
+    DEFAULT_QA_EXCLUDE,
+    QA_FLAGS,
+    SceneLayoutError,
+    SensorSpec,
+    flags_to_layers,
+    valid_from_flags,
+)
 from spires_io.solar import per_pixel_sza_provider
 
 # QA_PIXEL bits (Landsat Collection 2 Level-2 Science Product Guide, table 6-3).
-_QA_PIXEL_BITS = {"fill": 0, "cloud_buffer": 1, "cirrus": 2, "cloud": 3, "cloud_shadow": 4}
+_QA_PIXEL_BITS = {
+    "fill": 0, "cloud_buffer": 1, "cirrus": 2, "cloud": 3, "cloud_shadow": 4, "snow": 5, "water": 7,
+}
 # QA_RADSAT bit n-1 marks band n saturated; we use bands 2-7.
 _QA_RADSAT_INVALID_BITS = (1, 2, 3, 4, 5, 6)
+QA_FLAGS_AVAILABLE = QA_FLAGS   # QA_PIXEL and QA_RADSAT express every sensor-neutral flag
 
 
 def _any_bit_set(values: np.ndarray, bits) -> np.ndarray:
@@ -20,12 +30,17 @@ def _any_bit_set(values: np.ndarray, bits) -> np.ndarray:
     return (values & mask) != 0
 
 
+def decode_qa_flags(layers: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """One bool plane per QA_FLAGS entry, from QA_PIXEL bits and QA_RADSAT (bands 2-7)."""
+    qa_pixel = layers["qa_pixel"]
+    flags = {name: _any_bit_set(qa_pixel, [bit]) for name, bit in _QA_PIXEL_BITS.items()}
+    flags["saturated"] = _any_bit_set(layers["qa_radsat"], _QA_RADSAT_INVALID_BITS)
+    return flags_to_layers(flags, qa_pixel.shape)
+
+
 def decode_qa(layers: dict[str, np.ndarray], exclude: frozenset[str] = DEFAULT_QA_EXCLUDE) -> np.ndarray:
     """True where the pixel may be inverted: none of the ``exclude`` flags is set."""
-    bad = _any_bit_set(layers["qa_pixel"], [bit for name, bit in _QA_PIXEL_BITS.items() if name in exclude])
-    if "saturated" in exclude:
-        bad |= _any_bit_set(layers["qa_radsat"], _QA_RADSAT_INVALID_BITS)
-    return ~bad
+    return valid_from_flags(decode_qa_flags(layers), exclude)
 
 
 def _mtl_path(scene_dir: Path) -> Path:
@@ -67,6 +82,9 @@ SPEC = SensorSpec(
     nodata=0,
     qa_files={"qa_pixel": "*_QA_PIXEL.TIF", "qa_radsat": "*_QA_RADSAT.TIF"},
     decode_qa=decode_qa,
+    decode_qa_flags=decode_qa_flags,
+    qa_flags_available=QA_FLAGS_AVAILABLE,
+    qa_source="QA_PIXEL",
     sza_provider=per_pixel_sza_provider(read_acquisition_time),
     acquisition_time=read_acquisition_time,
     default_target_resolution_m=30,
