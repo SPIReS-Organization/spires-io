@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import rioxarray
 import xarray as xr
+from spires_contract.qa import QA_FLAGS, validate_qa_mask
 from spires_contract.spectra import validate_solar_angles, validate_target_spectra
 
 from spires_io.sensor_spec import (
@@ -116,9 +117,24 @@ def open_raster_scene(
         qa_raw = {n: clip_box(da, bbox) for n, da in qa_raw.items()}
     qa_on_grid = nearest(qa_raw, target_m)
     check_same_grid({**qa_on_grid, "_reflectance": template})
-    valid = spec.decode_qa({n: da.values for n, da in qa_on_grid.items()}, qa_exclude)
+    qa_layers = {n: da.values for n, da in qa_on_grid.items()}
+    valid = spec.decode_qa(qa_layers, qa_exclude)
     stack = np.stack([on_grid[n].values for n in names], axis=-1)
     valid &= np.isfinite(stack).all(axis=-1)
+
+    flags = spec.decode_qa_flags(qa_layers)
+    qa_mask = xr.DataArray(
+        np.stack([flags[f] for f in QA_FLAGS]),
+        dims=("flag", "y", "x"),
+        coords={"flag": list(QA_FLAGS), "y": template.y, "x": template.x},
+        name="qa_mask",
+        attrs={
+            "long_name": "Per-flag QA mask (True = flag set)",
+            "qa_source": spec.qa_source,
+            "qa_flags_available": " ".join(spec.qa_flags_available),
+        },
+    )
+    validate_qa_mask(qa_mask)
 
     reflectance = xr.DataArray(
         stack.astype(np.float32),
@@ -145,6 +161,7 @@ def open_raster_scene(
         {
             "reflectance": reflectance,
             "valid": xr.DataArray(valid, dims=("y", "x"), coords={"y": template.y, "x": template.x}),
+            "qa_mask": qa_mask,
             "solar_zenith": solar_zenith,
         },
         attrs={

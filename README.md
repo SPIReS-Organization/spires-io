@@ -248,11 +248,12 @@ directly; `spires-io` does not define a second manifest-item schema.
 `spires_io.raster_scene.open_raster_scene` turns a locally stored scene directory
 into an inversion-ready `xarray.Dataset` on one grid:
 
-| Variable       | Dims            | dtype   | Meaning                                                    |
-|----------------|-----------------|---------|------------------------------------------------------------|
-| `reflectance`  | `(y, x, band)`  | float32 | Surface reflectance; NaN where nodata. Passes `validate_target_spectra`. |
-| `valid`        | `(y, x)`        | bool    | True = run the inversion (not fill / cloud / shadow / cirrus / saturated / nodata). |
-| `solar_zenith` | `(y, x)`        | float32 | Degrees, `units="degree"`. Passes `validate_solar_angles`. |
+| Variable       | Dims           | dtype   | Meaning                                                                                                                               |
+|----------------|----------------|---------|---------------------------------------------------------------------------------------------------------------------------------------|
+| `reflectance`  | `(y, x, band)` | float32 | Surface reflectance; NaN where nodata. Passes `validate_target_spectra`.                                                              |
+| `valid`        | `(y, x)`       | bool    | True = run the inversion (not fill / cloud / shadow / cirrus / saturated / nodata).                                                   |
+| `qa_mask`      | `(flag, y, x)` | bool    | Per-flag QA layer, `flag` = `QA_FLAGS`, True = flag set. Independent of `qa_exclude`. Flags the product cannot express are all-False. |
+| `solar_zenith` | `(y, x)`       | float32 | Degrees, `units="degree"`. Passes `validate_solar_angles`.                                                                            |
 
 `band` carries common names (`blue, green, red, nir, swir1, swir2, …`) and a
 `wavelength_nm` coordinate. Dataset attrs: `sensor`, `platform` (Landsat), `acquisition_time`,
@@ -277,20 +278,26 @@ s2_10m = open_surface_reflectance(".../sentinel2/S2B_11SLB_20250420_0_L2A", sens
                                   target_resolution_m=10, resampler=my_super_resolver)       # any Resampler callable
 ```
 
-`valid` is decoded from the provider QA product through a sensor-neutral flag set,
-`spires_io.sensor_spec.QA_FLAGS` = `fill, saturated, cloud, cirrus, cloud_buffer,
-cloud_shadow`. By default every flag invalidates a pixel. Pass `qa_exclude=` to
-`open_surface_reflectance` (or any adapter) to choose a narrower policy; the chosen set is
-recorded in `ds.attrs["qa_exclude"]`:
+Each provider QA product is decoded into a sensor-neutral flag vocabulary owned by
+`spires-contract` (`spires_contract.qa.QA_FLAGS` = `fill, saturated, cloud, cirrus,
+cloud_buffer, cloud_shadow, snow, water`). `qa_mask` carries one boolean plane per flag;
+`valid` is derived from the flags named by `spires_contract.qa.QA_INVALID_FLAGS` (the first
+six), so `snow` and `water` are recorded but never invalidate a pixel. Pass `qa_exclude=`
+to `open_surface_reflectance` (or any adapter) to choose a different invalidating set; the
+chosen set is recorded in `ds.attrs["qa_exclude"]`. The `qa_mask` itself does not change
+with `qa_exclude`. A flag the product cannot express is `—` below: it is all-False and
+omitted from the `qa_flags_available` attribute of `qa_mask`.
 
-| Flag           | Landsat C2 `QA_PIXEL`         | HLS `Fmask`                   | Sentinel-2 `SCL`              |
-|----------------|-------------------------------|-------------------------------|-------------------------------|
-| `fill`         | bit 0                         | value 255                     | class 0                       |
-| `saturated`    | `QA_RADSAT` bits 1-6 (B2-B7)  | —                             | class 1                       |
-| `cloud`        | bit 3                         | bit 1                         | classes 8, 9                  |
-| `cirrus`       | bit 2                         | bit 0                         | class 10                      |
-| `cloud_buffer` | bit 1 (dilated cloud)         | bit 2 (adjacent to cloud)     | —                             |
-| `cloud_shadow` | bit 4                         | bit 3                         | classes 2, 3                  |
+| Flag           | Landsat C2 `QA_PIXEL`        | HLS `Fmask`               | Sentinel-2 `SCL` |
+|----------------|------------------------------|---------------------------|------------------|
+| `fill`         | bit 0                        | value 255                 | class 0          |
+| `saturated`    | `QA_RADSAT` bits 1-6 (B2-B7) | —                         | class 1          |
+| `cloud`        | bit 3                        | bit 1                     | classes 8, 9     |
+| `cirrus`       | bit 2                        | bit 0                     | class 10         |
+| `cloud_buffer` | bit 1 (dilated cloud)        | bit 2 (adjacent to cloud) | —                |
+| `cloud_shadow` | bit 4                        | bit 3                     | classes 2, 3     |
+| `snow`         | bit 5                        | bit 4                     | class 11         |
+| `water`        | bit 7                        | bit 5                     | class 6          |
 
 The buffer and shadow flags are where the providers disagree most: Collection 2 dilates
 clouds and projects shadows aggressively over bright snow, Fmask in HLS much less so, and
