@@ -31,15 +31,26 @@ def _any_bit_set(values: np.ndarray, bits) -> np.ndarray:
 
 
 def decode_qa_flags(layers: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    """One bool plane per QA_FLAGS entry, from QA_PIXEL bits and QA_RADSAT (bands 2-7)."""
+    """One bool plane per QA_FLAGS entry, from QA_PIXEL bits and QA_RADSAT (bands 2-7).
+
+    ``qa_radsat`` is optional: without it ``saturated`` is all-False, the same
+    default ``flags_to_layers`` gives any flag a product cannot express.
+    """
     qa_pixel = layers["qa_pixel"]
     flags = {name: _any_bit_set(qa_pixel, [bit]) for name, bit in _QA_PIXEL_BITS.items()}
-    flags["saturated"] = _any_bit_set(layers["qa_radsat"], _QA_RADSAT_INVALID_BITS)
+    if "qa_radsat" in layers:
+        flags["saturated"] = _any_bit_set(layers["qa_radsat"], _QA_RADSAT_INVALID_BITS)
     return flags_to_layers(flags, qa_pixel.shape)
 
 
 def decode_qa(layers: dict[str, np.ndarray], exclude: frozenset[str] = DEFAULT_QA_EXCLUDE) -> np.ndarray:
-    """True where the pixel may be inverted: none of the ``exclude`` flags is set."""
+    """True where the pixel may be inverted: none of the ``exclude`` flags is set.
+
+    Excluding ``saturated`` requires ``qa_radsat``. Without it the pixel would
+    pass as valid on an all-False flag, so the call fails as base did.
+    """
+    if "saturated" in exclude and "qa_radsat" not in layers:
+        raise KeyError("qa_radsat is required to exclude saturated pixels")
     return valid_from_flags(decode_qa_flags(layers), exclude)
 
 

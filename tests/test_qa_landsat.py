@@ -96,6 +96,25 @@ def test_decode_qa_flags_landsat_bits():
     assert QA_FLAGS_AVAILABLE == QA_FLAGS
 
 
+def test_decode_qa_ignores_unknown_exclude_names():
+    # Before the qa_mask change, names outside QA_FLAGS excluded nothing.
+    layers = {"qa_pixel": np.array([[CLEAR, CLOUD]], np.uint16), "qa_radsat": np.zeros((1, 2), np.uint16)}
+    assert decode_qa(layers, exclude=frozenset({"haze"})).tolist() == [[True, True]]
+    assert decode_qa(layers, exclude=frozenset({"haze", "cloud"})).tolist() == [[True, False]]
+
+
+def test_decode_qa_without_qa_radsat():
+    # QA_RADSAT is read only when saturation is excluded. Without it, a policy
+    # that excludes saturation still raises, as base did, instead of silently
+    # passing saturated pixels as valid.
+    from spires_io.sensor_spec import DEFAULT_QA_EXCLUDE
+    layers = {"qa_pixel": np.array([[CLEAR, CLOUD]], np.uint16)}
+    assert not decode_qa_flags(layers)["saturated"].any()
+    assert decode_qa(layers, exclude=DEFAULT_QA_EXCLUDE - {"saturated"}).tolist() == [[True, False]]
+    with pytest.raises(KeyError, match="qa_radsat"):
+        decode_qa(layers)
+
+
 def test_flags_to_layers_fills_missing_flags_and_rejects_unknown():
     from spires_io.sensor_spec import flags_to_layers
     shape = (2, 2)

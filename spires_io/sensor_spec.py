@@ -50,9 +50,13 @@ def flags_to_layers(flags: dict[str, np.ndarray], shape: tuple[int, int]) -> dic
 
 
 def valid_from_flags(flags: dict[str, np.ndarray], exclude: frozenset[str]) -> np.ndarray:
-    """True where none of the ``exclude`` flags is set. Every sensor's ``decode_qa`` goes through this."""
+    """True where none of the ``exclude`` flags is set. Every sensor's ``decode_qa`` goes through this.
+
+    Names outside QA_FLAGS are ignored, as the decoders did before the flag
+    planes existed: ``exclude={"haze"}`` excludes nothing.
+    """
     bad = np.zeros(flags["fill"].shape, dtype=bool)
-    for name in exclude:
+    for name in exclude & set(QA_FLAGS):
         bad |= flags[name]
     return ~bad
 
