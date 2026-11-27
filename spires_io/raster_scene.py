@@ -35,7 +35,28 @@ def read_band(path: Path) -> xr.DataArray:
     finalizer noise is printed to stderr.
     """
     with rioxarray.open_rasterio(path, masked=False) as da:
-        return da.squeeze("band", drop=True).load()
+        return to_utm_south(da.squeeze("band", drop=True).load())
+
+
+UTM_FALSE_NORTHING_M = 10_000_000.0
+
+
+def to_utm_south(da: xr.DataArray) -> xr.DataArray:
+    """Re-express a southern-hemisphere raster coded as UTM north (EPSG:326xx, negative
+    northings) in the matching UTM south zone (EPSG:327xx).
+
+    Landsat Collection 2 delivers scenes south of the equator this way, while Sentinel-2
+    and HLS use the 327xx codes. The two differ only by the 10 000 000 m false northing,
+    so this is a coordinate shift on the same pixel grid; nothing is resampled. Rasters
+    in any other CRS, or with non-negative northings, are returned unchanged.
+    """
+    epsg = da.rio.crs.to_epsg() if da.rio.crs is not None else None
+    if epsg is None or not 32601 <= epsg <= 32660 or float(da.y.max()) >= 0:
+        return da
+    out = da.assign_coords(y=da.y + UTM_FALSE_NORTHING_M)
+    return out.rio.write_crs(f"EPSG:{epsg + 100}").rio.write_transform(
+        out.rio.transform(recalc=True)
+    )
 
 
 def clip_box(da: xr.DataArray, bbox: tuple[float, float, float, float]) -> xr.DataArray:
