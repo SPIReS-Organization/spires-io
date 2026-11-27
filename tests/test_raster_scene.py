@@ -246,3 +246,32 @@ def test_sza_grid_offset_beyond_half_pixel_raises(hls_l30_scene):
 
     with pytest.raises(ValueError, match="does not align"):
         open_raster_scene(hls_l30_scene, replace(L30_SPEC, sza_provider=shifted_sza))
+
+
+def test_landsat_southern_scene_is_shifted_to_utm_south(tmp_path):
+    """Collection 2 delivers southern scenes in the northern EPSG:326xx code with negative
+    northings; the adapter must express them in EPSG:327xx by adding the 10 000 000 m false
+    northing, without resampling or changing the pixel grid."""
+    scene = write_fake_landsat_scene(tmp_path, crs="EPSG:32619", origin=(400000.0, -3630000.0))
+    ds = open_landsat_scene(scene)
+    assert ds.rio.crs.to_epsg() == 32719
+    assert ds.y.values[0] == pytest.approx(10_000_000.0 - 3_630_000.0 - 15.0)
+    assert ds.x.values[0] == pytest.approx(400000.0 + 15.0)
+    assert ds.reflectance.shape == (8, 8, 6)
+    assert ds.solar_zenith.notnull().all()
+    sza = float(ds.solar_zenith.mean())
+    assert 0 < sza < 90
+
+
+def test_landsat_southern_scene_accepts_utm_south_bbox(tmp_path):
+    scene = write_fake_landsat_scene(tmp_path, crs="EPSG:32619", origin=(400000.0, -3630000.0))
+    y_top = 10_000_000.0 - 3_630_000.0
+    ds = open_landsat_scene(scene, bbox=(400000.0, y_top - 120.0, 400000.0 + 120.0, y_top))
+    assert ds.reflectance.shape[:2] == (4, 4)
+    assert ds.rio.crs.to_epsg() == 32719
+
+
+def test_northern_scene_is_untouched(landsat_scene):
+    ds = open_landsat_scene(landsat_scene)
+    assert ds.rio.crs.to_epsg() == 32611
+    assert ds.y.values[0] == pytest.approx(4170000.0 - 15.0)

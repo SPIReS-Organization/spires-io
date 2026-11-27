@@ -13,13 +13,15 @@ X0, Y0 = 300000.0, 4170000.0   # upper-left corner, UTM 11N, near Mammoth
 SHAPE = (8, 8)
 
 
-def write_raster(path: Path, values: np.ndarray, resolution_m: int, nodata=None) -> Path:
+def write_raster(path: Path, values: np.ndarray, resolution_m: int, nodata=None, *,
+                 crs=CRS, origin=(X0, Y0)) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     values = np.asarray(values)
+    x0, y0 = origin
     with rasterio.open(
         path, "w", driver="GTiff", height=values.shape[0], width=values.shape[1],
-        count=1, dtype=values.dtype, crs=CRS, nodata=nodata,
-        transform=Affine(resolution_m, 0.0, X0, 0.0, -resolution_m, Y0),
+        count=1, dtype=values.dtype, crs=crs, nodata=nodata,
+        transform=Affine(resolution_m, 0.0, x0, 0.0, -resolution_m, y0),
     ) as dst:
         dst.write(values, 1)
     return path
@@ -37,15 +39,17 @@ LANDSAT_ID = "LC08_L2SP_042034_20240214_20240223_02_T1"
 LANDSAT_CLEAR_QA_PIXEL = 21824
 
 
-def write_fake_landsat_scene(root: Path, *, dn=4000, qa=None, shape=SHAPE) -> Path:
+def write_fake_landsat_scene(root: Path, *, dn=4000, qa=None, shape=SHAPE,
+                             crs=CRS, origin=(X0, Y0)) -> Path:
     scene = root / LANDSAT_ID
+    grid = dict(crs=crs, origin=origin)
     for name, code in LANDSAT_BANDS.items():
-        write_raster(scene / f"{LANDSAT_ID}_SR_{code}.TIF", _fill(dn, name, shape, np.uint16), 30, nodata=0)
+        write_raster(scene / f"{LANDSAT_ID}_SR_{code}.TIF", _fill(dn, name, shape, np.uint16), 30, nodata=0, **grid)
     qa = qa or {}
     qa_pixel = np.asarray(qa.get("qa_pixel", np.full(shape, LANDSAT_CLEAR_QA_PIXEL)), dtype=np.uint16)
     qa_radsat = np.asarray(qa.get("qa_radsat", np.zeros(shape)), dtype=np.uint16)
-    write_raster(scene / f"{LANDSAT_ID}_QA_PIXEL.TIF", qa_pixel, 30)
-    write_raster(scene / f"{LANDSAT_ID}_QA_RADSAT.TIF", qa_radsat, 30)
+    write_raster(scene / f"{LANDSAT_ID}_QA_PIXEL.TIF", qa_pixel, 30, **grid)
+    write_raster(scene / f"{LANDSAT_ID}_QA_RADSAT.TIF", qa_radsat, 30, **grid)
     (scene / f"{LANDSAT_ID}_MTL.txt").write_text(
         "GROUP = LANDSAT_METADATA_FILE\n"
         "  GROUP = IMAGE_ATTRIBUTES\n"
